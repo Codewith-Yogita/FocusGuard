@@ -1,0 +1,29 @@
+@"
+# Build artifacts
+*.exe
+*.obj
+*.o
+*.dll
+
+# IDE
+.vscode/
+
+# Runtime/generated data
+screen_frames/
+screen_ocr.bmp
+ocr_result.txt
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Environment / secrets
+.env
+.env.*
+
+# OS
+Thumbs.db
+.DS_Store
+"@ | Out-File -Encoding utf8 .gitignore
