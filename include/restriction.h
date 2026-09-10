@@ -4,27 +4,38 @@
 #include <string>
 #include <unordered_map>
 #include <chrono>
+#include <windows.h>
 
 class RestrictionManager
 {
 private:
 
-    // Stores the time until which an application remains restricted.
+    struct Restriction
+    {
+        std::chrono::steady_clock::time_point restrictedUntil;
+        HWND windowHandle = NULL;
+    };
+
     std::unordered_map<
         std::string,
-        std::chrono::steady_clock::time_point>
-        restrictedUntil;
+        Restriction>
+        restrictions;
 
 public:
 
-    // Start a restriction.
+    // Start a restriction for an application/window.
     void restrictApplication(
         const std::string &application,
-        int cooldownSeconds);
+        int cooldownSeconds,
+        HWND windowHandle);
 
     // Check whether an application is currently restricted.
     bool isRestricted(
         const std::string &application) const;
+
+    // Enforce an active restriction.
+    void enforceRestriction(
+        const std::string &application);
 
     // Remove restriction manually.
     void clearRestriction(

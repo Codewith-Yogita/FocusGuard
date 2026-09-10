@@ -271,6 +271,48 @@ bool isYouTubeShorts(const string &url)
         lowerUrl.find("youtube.com/shorts/") != string::npos ||
         lowerUrl.find("youtube.com/shorts") != string::npos);
 }
+
+bool isInstagramUrl(const string &url)
+{
+    string lowerUrl = toLowerCase(url);
+
+    return (
+        lowerUrl.find("instagram.com") != string::npos);
+}
+
+bool isSnapchatUrl(const string &url)
+{
+    string lowerUrl = toLowerCase(url);
+
+    return (
+        lowerUrl.find("snapchat.com") != string::npos);
+}
+
+bool isFacebookUrl(const string &url)
+{
+    string lowerUrl = toLowerCase(url);
+
+    return (
+        lowerUrl.find("facebook.com") != string::npos ||
+        lowerUrl.find("fb.com") != string::npos);
+}
+
+bool isWhatsAppUrl(const string &url)
+{
+    string lowerUrl = toLowerCase(url);
+
+    return (
+        lowerUrl.find("web.whatsapp.com") != string::npos ||
+        lowerUrl.find("whatsapp.com") != string::npos);
+}
+
+bool isLinkedInUrl(const string &url)
+{
+    string lowerUrl = toLowerCase(url);
+
+    return (
+        lowerUrl.find("linkedin.com") != string::npos);
+}
 // ============================================================
 // DETECT BROWSER CONTEXT
 // ============================================================
@@ -285,66 +327,118 @@ BrowserInfo detectBrowserContext(HWND hwnd)
     info.isBrowser = true;
 
     // --------------------------------------------------------
-    // Get current URL from browser address bar
+    // GET CURRENT URL
     // --------------------------------------------------------
 
     info.url = getBrowserUrl(hwnd);
 
-    cout << "[BROWSER URL] " << info.url << endl;
+    cout << "[BROWSER URL] "
+         << info.url
+         << endl;
 
     string url = toLowerCase(info.url);
 
     // --------------------------------------------------------
-    // Not a YouTube page
+    // NO URL
     // --------------------------------------------------------
 
-    if (!isYouTubeUrl(url))
+    if (url.empty())
         return info;
 
-    info.isYouTube = true;
+    // ========================================================
+    // YOUTUBE
+    // ========================================================
 
-    // --------------------------------------------------------
-    // YouTube Shorts
-    // --------------------------------------------------------
-    //
-    // IMPORTANT:
-    // URL detection has priority over title/OCR.
-    //
-    // Therefore:
-    //
-    // https://www.youtube.com/shorts/abc123
-    //
-    // is ALWAYS a distraction, regardless of title.
-    // --------------------------------------------------------
-
-    if (isYouTubeShorts(url))
+    if (isYouTubeUrl(url))
     {
-        info.isYouTubeShort = true;
+        info.isYouTube = true;
+
+        // ----------------------------------------------------
+        // YOUTUBE SHORTS
+        // ----------------------------------------------------
+
+        if (isYouTubeShorts(url))
+        {
+            info.isYouTubeShort = true;
+            return info;
+        }
+
+        // ----------------------------------------------------
+        // YOUTUBE HISTORY
+        // ----------------------------------------------------
+
+        if (
+            url.find("youtube.com/feed/history") !=
+            string::npos)
+        {
+            info.isYouTubeHistory = true;
+            return info;
+        }
+
+        // ----------------------------------------------------
+        // YOUTUBE HOME
+        // ----------------------------------------------------
+
+        if (
+            url == "https://www.youtube.com/" ||
+            url == "https://youtube.com/" ||
+            url.find("youtube.com/?") !=
+                string::npos)
+        {
+            info.isYouTubeHome = true;
+            return info;
+        }
+
         return info;
     }
 
-    // --------------------------------------------------------
-    // YouTube Watch History
-    // --------------------------------------------------------
+    // ========================================================
+    // INSTAGRAM
+    // ========================================================
 
-    if (
-        url.find("youtube.com/feed/history") != string::npos ||
-        url.find("youtube.com/feed/history/") != string::npos)
+    if (isInstagramUrl(url))
     {
-        info.isYouTubeHistory = true;
+        info.isInstagram = true;
         return info;
     }
 
-    // --------------------------------------------------------
-    // YouTube Home
-    // --------------------------------------------------------
+    // ========================================================
+    // SNAPCHAT
+    // ========================================================
 
-    if (
-        url == "https://www.youtube.com/" ||
-        url == "https://youtube.com/" ||
-        url.find("youtube.com/?") != string::npos)
+    if (isSnapchatUrl(url))
     {
-        info.isYouTubeHome = true;
+        info.isSnapchat = true;
+        return info;
+    }
+
+    // ========================================================
+    // FACEBOOK
+    // ========================================================
+
+    if (isFacebookUrl(url))
+    {
+        info.isFacebook = true;
+        return info;
+    }
+
+    // ========================================================
+    // WHATSAPP
+    // ========================================================
+
+    if (isWhatsAppUrl(url))
+    {
+        info.isWhatsApp = true;
+        return info;
+    }
+
+    // ========================================================
+    // LINKEDIN
+    // ========================================================
+
+    if (isLinkedInUrl(url))
+    {
+        info.isLinkedIn = true;
         return info;
     }
 
