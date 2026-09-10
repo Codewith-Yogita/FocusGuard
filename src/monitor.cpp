@@ -58,7 +58,7 @@ HWND getActiveWindowHandle()
 }
 
 // ============================================================
-// GET WINDOW TITLE
+// GET WINDOW TITLE (UTF-8 SAFE)
 // ============================================================
 
 string getWindowTitle(HWND hwnd)
@@ -70,7 +70,6 @@ string getWindowTitle(HWND hwnd)
     int length = GetWindowTextW(hwnd, wTitle, sizeof(wTitle) / sizeof(wchar_t));
     if (length == 0)
     {
-        // Try getting window class name as fallback (e.g. desktop shell or taskbar)
         char className[256] = {};
         if (GetClassNameA(hwnd, className, sizeof(className)) > 0)
         {
@@ -108,7 +107,6 @@ string getActiveApplication(HWND hwnd)
     if (processId == 0)
         return "System / Idle";
 
-    // PROCESS_QUERY_LIMITED_INFORMATION succeeds even for elevated/system processes
     HANDLE process = OpenProcess(
         PROCESS_QUERY_LIMITED_INFORMATION,
         FALSE,
@@ -558,7 +556,7 @@ int main(int argc, char *argv[])
 
                 // Start cooldown
                 int cooldown = (policy.cooldownSeconds > 0) ? policy.cooldownSeconds : 120;
-                restrictionManager.restrictApplication(logicalApp, cooldown);
+                restrictionManager.restrictApplication(logicalApp, cooldown, hwnd);
 
                 // Non-blocking enforcement
                 enforcementManager.enforce(
