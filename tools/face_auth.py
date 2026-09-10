@@ -15,6 +15,18 @@ import urllib.request
 import cv2
 import numpy as np
 
+# Ensure Windows console supports UTF-8 characters (e.g. non-ASCII directory names)
+if sys.stdout and hasattr(sys.stdout, "reconfigure"):
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+if sys.stderr and hasattr(sys.stderr, "reconfigure"):
+    try:
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+
 # Directory paths
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 MODELS_DIR = os.path.join(BASE_DIR, "models")
@@ -130,20 +142,45 @@ class FaceAuthEngine:
                 print(f"[FaceAuth] Model {filename} ready ({os.path.getsize(dest)} bytes).")
 
     def _init_models(self):
-        """Loads YuNet and SFace into OpenCV DNN."""
+        """Loads YuNet and SFace into OpenCV DNN, supporting in-memory buffers for Unicode paths."""
         try:
-            self.detector = cv2.FaceDetectorYN.create(
-                YUNET_PATH,
-                "",
-                (320, 320),
-                score_threshold=0.6,
-                nms_threshold=0.3,
-                top_k=5000
-            )
-            self.recognizer = cv2.FaceRecognizerSF.create(
-                SFACE_PATH,
-                ""
-            )
+            # Try memory buffer first to avoid Windows Unicode path issues with OpenCV's C++ parser
+            try:
+                with open(YUNET_PATH, "rb") as f:
+                    yunet_bytes = f.read()
+                self.detector = cv2.FaceDetectorYN.create(
+                    "onnx",
+                    yunet_bytes,
+                    bytearray(),
+                    (320, 320),
+                    score_threshold=0.6,
+                    nms_threshold=0.3,
+                    top_k=5000
+                )
+            except Exception:
+                self.detector = cv2.FaceDetectorYN.create(
+                    YUNET_PATH,
+                    "",
+                    (320, 320),
+                    score_threshold=0.6,
+                    nms_threshold=0.3,
+                    top_k=5000
+                )
+
+            try:
+                with open(SFACE_PATH, "rb") as f:
+                    sface_bytes = f.read()
+                self.recognizer = cv2.FaceRecognizerSF.create(
+                    "onnx",
+                    sface_bytes,
+                    bytearray()
+                )
+            except Exception:
+                self.recognizer = cv2.FaceRecognizerSF.create(
+                    SFACE_PATH,
+                    ""
+                )
+
             self.initialized = True
             print("[FaceAuth] YuNet and SFace models initialized successfully.")
         except Exception as e:
