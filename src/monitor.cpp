@@ -1,4 +1,5 @@
 #include "../include/ocr.h"
+#include "../include/user_identity.h"
 #include "../include/policy.h"
 #include "../include/classifier.h"
 #include "../include/restriction.h"
@@ -19,6 +20,11 @@
 
 using namespace std;
 using namespace chrono;
+
+enum class UserIdentity {
+    USER,
+    GUEST
+};
 
 // ============================================================
 // TEXT UTILITY
@@ -246,6 +252,7 @@ int main(int argc, char *argv[])
     AIClient aiClient("127.0.0.1", 8765);
     FaceAuthClient faceClient("127.0.0.1", 8765);
     FaceAuthManager faceAuthManager(faceClient, policyManager);
+    UserIdentity currentIdentity = UserIdentity::USER;
 
     // CLI Arguments Handling
     bool startLocked = false;
@@ -382,6 +389,23 @@ int main(int argc, char *argv[])
             {
                 lastPresenceCheck = steady_clock::now();
                 faceAuthManager.checkPresenceHeartbeat();
+
+                if (faceAuthManager.isUserPresent())
+                {
+                    if (currentIdentity != UserIdentity::USER)
+                    {
+                        cout << "\n[Identity] USER detected. FocusGuard active." << endl;
+                    }
+                    currentIdentity = UserIdentity::USER;
+                }
+                else
+                {
+                    if (currentIdentity != UserIdentity::GUEST)
+                    {
+                        cout << "\n[Identity] GUEST detected. Personal restrictions paused." << endl;
+                    }
+                    currentIdentity = UserIdentity::GUEST;
+                }
             }
         }
 
@@ -466,7 +490,9 @@ int main(int argc, char *argv[])
         }
 
         // 5. Check if currently restricted under cooldown
-        bool isAppRestricted = restrictionManager.isRestricted(logicalApp);
+        bool isAppRestricted =
+            currentIdentity == UserIdentity::USER &&
+            restrictionManager.isRestricted(logicalApp);
 
         if (isAppRestricted)
         {
@@ -488,7 +514,9 @@ int main(int argc, char *argv[])
         }
 
         // 6. Policy decision & Distraction streak handling
-        bool policyApplies = policyManager.shouldRestrict(logicalApp, classification);
+        bool policyApplies =
+            currentIdentity == UserIdentity::USER &&
+            policyManager.shouldRestrict(logicalApp, classification);
 
         if (classification == "DISTRACTION" && policyApplies && !isAppRestricted)
         {
@@ -558,8 +586,11 @@ int main(int argc, char *argv[])
 
         // 7. Robust real-time time accumulation (1-second increments)
         string currentActivity = logicalApp + " | " + windowTitle;
-        activityTime[currentActivity] += 1;
-        classificationTime[classification] += 1;
+        if (currentIdentity == UserIdentity::USER)
+        {
+            activityTime[currentActivity] += 1;
+            classificationTime[classification] += 1;
+        }
 
         if (currentActivity != previousActivity)
         {
@@ -573,6 +604,7 @@ int main(int argc, char *argv[])
         cout << "\n----------------------------------------" << endl;
         cout << "Loop           : " << ++loopCount << endl;
         cout << "Application    : " << application << " (" << logicalApp << ")" << endl;
+        cout << "Identity       : " << (currentIdentity == UserIdentity::USER ? "USER" : "GUEST") << endl;
         cout << "Title          : " << windowTitle << endl;
         if (!browserInfo.url.empty())
         {

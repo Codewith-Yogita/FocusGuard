@@ -322,7 +322,7 @@ bool FaceAuthClient::resetEnrollment(const string &userId)
 
 FaceAuthManager::FaceAuthManager(FaceAuthClient &cli, PolicyManager &pol)
     : client(cli), policyManager(pol), currentState(AuthState::LOCKED),
-      failedAttempts(0), pinFallbackActive(false)
+      failedAttempts(0), pinFallbackActive(false), userPresent(false)
 {
     lockoutUntil = steady_clock::now();
     lastPresenceSuccess = steady_clock::now();
@@ -398,11 +398,16 @@ bool FaceAuthManager::attemptFaceAuth()
 bool FaceAuthManager::checkPresenceHeartbeat()
 {
     if (currentState == AuthState::LOCKED)
+    {
+        userPresent = false;
         return false;
+    }
 
     double conf = 0.0;
     bool present = client.checkPresence("default", &conf);
     auto now = steady_clock::now();
+
+    userPresent = present;
 
     if (present)
     {

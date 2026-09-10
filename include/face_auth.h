@@ -81,6 +81,7 @@ private:
     std::chrono::steady_clock::time_point lockoutUntil;
     std::chrono::steady_clock::time_point lastPresenceSuccess;
     bool pinFallbackActive;
+    bool userPresent;
 
 public:
     FaceAuthManager(FaceAuthClient &cli, PolicyManager &pol);
@@ -88,6 +89,7 @@ public:
     AuthState getState() const { return currentState; }
     bool isLocked() const { return currentState == AuthState::LOCKED; }
     int getFailedAttempts() const { return failedAttempts; }
+    bool isUserPresent() const { return userPresent; }
 
     void triggerLock(const std::string &reason);
     void unlockSession();

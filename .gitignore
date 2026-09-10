@@ -1,5 +1,7 @@
 # Build artifacts
+build/
 bin/
+*.exe
 *.obj
 *.o
 *.dll

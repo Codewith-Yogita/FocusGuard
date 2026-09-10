@@ -16,6 +16,7 @@ set(FOCUSGUARD_CORE_SOURCES
     src/ocr.cpp
     src/ai_client.cpp
     src/face_auth.cpp
+    src/user_identity.cpp
 )
 
 # 1. Main Background Monitor Daemon
