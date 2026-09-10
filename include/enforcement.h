@@ -12,15 +12,20 @@ private:
 public:
     EnforcementManager();
 
+    // Executes non-blocking enforcement (alerts user asynchronously, minimizes distracting window)
     bool enforce(
         HWND targetWindow,
         const std::string &logicalApp,
         const std::string &reason,
-        int cooldownSeconds);
+        int cooldownSeconds,
+        bool isBrowser = false);
 
     bool isRestrictionActive() const;
-
     void clearRestriction();
+
+    void pauseEnforcement();
+    void resumeEnforcement();
+    bool isEnforcementPaused() const;
 };
 
 #endif

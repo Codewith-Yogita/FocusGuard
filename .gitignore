@@ -1,14 +1,17 @@
-@"
 # Build artifacts
+build/
+bin/
 *.exe
 *.obj
 *.o
 *.dll
+*.a
 
 # IDE
 .vscode/
+.idea/
 
-# Runtime/generated data
+# Runtime / generated data
 screen_frames/
 screen_ocr.bmp
 ocr_result.txt
@@ -19,11 +22,12 @@ __pycache__/
 .venv/
 venv/
 
-# Environment / secrets
+# Environment / secrets & biometrics
 .env
 .env.*
+tools/face_template.enc
+tools/models/
 
 # OS
 Thumbs.db
 .DS_Store
-"@ | Out-File -Encoding utf8 .gitignore

@@ -1,4 +1,3 @@
-
 #include "../include/ocr.h"
 
 #include <windows.h>
@@ -11,11 +10,7 @@
 
 using namespace std;
 
-// ============================================================
-// SAVE BITMAP AS BMP
-// ============================================================
-
-bool saveBitmap(
+static bool saveBitmap(
     HBITMAP bitmap,
     HDC hdc,
     int width,
@@ -23,7 +18,6 @@ bool saveBitmap(
     const string &filename)
 {
     BITMAPINFOHEADER bi = {};
-
     bi.biSize = sizeof(BITMAPINFOHEADER);
     bi.biWidth = width;
     bi.biHeight = -height;
@@ -32,7 +26,6 @@ bool saveBitmap(
     bi.biCompression = BI_RGB;
 
     int imageSize = width * height * 4;
-
     vector<BYTE> pixels(imageSize);
 
     if (!GetDIBits(
@@ -48,73 +41,43 @@ bool saveBitmap(
     }
 
     BITMAPFILEHEADER bf = {};
-
     bf.bfType = 0x4D42;
+    bf.bfOffBits = sizeof(BITMAPFILEHEADER) + sizeof(BITMAPINFOHEADER);
+    bf.bfSize = bf.bfOffBits + imageSize;
 
-    bf.bfOffBits =
-        sizeof(BITMAPFILEHEADER) +
-        sizeof(BITMAPINFOHEADER);
-
-    bf.bfSize =
-        bf.bfOffBits + imageSize;
-
-    ofstream file(
-        filename,
-        ios::binary);
-
+    ofstream file(filename, ios::binary);
     if (!file)
         return false;
 
-    file.write(
-        (char *)&bf,
-        sizeof(BITMAPFILEHEADER));
-
-    file.write(
-        (char *)&bi,
-        sizeof(BITMAPINFOHEADER));
-
-    file.write(
-        (char *)pixels.data(),
-        imageSize);
-
+    file.write((char *)&bf, sizeof(BITMAPFILEHEADER));
+    file.write((char *)&bi, sizeof(BITMAPINFOHEADER));
+    file.write((char *)pixels.data(), imageSize);
     file.close();
 
     return true;
 }
 
-// ============================================================
-// CAPTURE SCREEN + OCR
-// ============================================================
-
 string captureScreenOCR()
 {
-    int screenWidth =
-        GetSystemMetrics(SM_CXSCREEN);
+    static bool tesseractAvailable = true;
+    if (!tesseractAvailable)
+        return "";
 
-    int screenHeight =
-        GetSystemMetrics(SM_CYSCREEN);
+    int screenWidth = GetSystemMetrics(SM_CXSCREEN);
+    int screenHeight = GetSystemMetrics(SM_CYSCREEN);
 
-    HDC screenDC =
-        GetDC(NULL);
-
+    HDC screenDC = GetDC(NULL);
     if (screenDC == NULL)
         return "";
 
-    HDC memoryDC =
-        CreateCompatibleDC(screenDC);
-
+    HDC memoryDC = CreateCompatibleDC(screenDC);
     if (memoryDC == NULL)
     {
         ReleaseDC(NULL, screenDC);
         return "";
     }
 
-    HBITMAP bitmap =
-        CreateCompatibleBitmap(
-            screenDC,
-            screenWidth,
-            screenHeight);
-
+    HBITMAP bitmap = CreateCompatibleBitmap(screenDC, screenWidth, screenHeight);
     if (bitmap == NULL)
     {
         DeleteDC(memoryDC);
@@ -122,107 +85,67 @@ string captureScreenOCR()
         return "";
     }
 
-    HBITMAP oldBitmap =
-        (HBITMAP)SelectObject(
-            memoryDC,
-            bitmap);
+    HBITMAP oldBitmap = (HBITMAP)SelectObject(memoryDC, bitmap);
 
-    // --------------------------------------------------------
-    // CAPTURE SCREEN
-    // --------------------------------------------------------
-
-    bool captured =
-        BitBlt(
-            memoryDC,
-            0,
-            0,
-            screenWidth,
-            screenHeight,
-            screenDC,
-            0,
-            0,
-            SRCCOPY);
+    bool captured = BitBlt(
+        memoryDC,
+        0,
+        0,
+        screenWidth,
+        screenHeight,
+        screenDC,
+        0,
+        0,
+        SRCCOPY);
 
     if (!captured)
     {
-        SelectObject(
-            memoryDC,
-            oldBitmap);
-
+        SelectObject(memoryDC, oldBitmap);
         DeleteObject(bitmap);
         DeleteDC(memoryDC);
         ReleaseDC(NULL, screenDC);
-
         return "";
     }
 
-    // --------------------------------------------------------
-    // SAVE TEMPORARY SCREENSHOT
-    // --------------------------------------------------------
+    string imageFile = "screen_ocr.bmp";
+    saveBitmap(bitmap, memoryDC, screenWidth, screenHeight, imageFile);
 
-    string imageFile =
-        "screen_ocr.bmp";
-
-    saveBitmap(
-        bitmap,
-        memoryDC,
-        screenWidth,
-        screenHeight,
-        imageFile);
-
-    // --------------------------------------------------------
-    // CLEAN WINDOWS RESOURCES
-    // --------------------------------------------------------
-
-    SelectObject(
-        memoryDC,
-        oldBitmap);
-
+    SelectObject(memoryDC, oldBitmap);
     DeleteObject(bitmap);
     DeleteDC(memoryDC);
     ReleaseDC(NULL, screenDC);
 
-   // ============================================================
-// RUN TESSERACT OCR
-// ============================================================
+    // Run Tesseract with low priority
+    string command = "tesseract screen_ocr.bmp ocr_result --psm 6 >nul 2>&1";
+    int result = system(command.c_str());
 
-cout << "Running Tesseract OCR..." << endl;
+    // Clean up temporary bmp immediately
+    remove(imageFile.c_str());
 
-string command =
-    "tesseract screen_ocr.bmp ocr_result --psm 6 >nul 2>&1";
+    if (result != 0)
+    {
+        // Don't spam if Tesseract is not installed
+        tesseractAvailable = false;
+        cout << "[OCR Notice] Tesseract CLI not available in PATH. Delegating to AI vision bridge." << endl;
+        return "";
+    }
 
-int result = system(command.c_str());
+    ifstream ocrFile("ocr_result.txt");
+    if (!ocrFile)
+    {
+        return "";
+    }
 
-if (result != 0)
-{
-    cout << "ERROR: Tesseract failed." << endl;
-    return "";
+    string text;
+    string line;
+    while (getline(ocrFile, line))
+    {
+        text += line + " ";
+    }
+    ocrFile.close();
+
+    // Clean up temporary txt result
+    remove("ocr_result.txt");
+
+    return text;
 }
-
-// ============================================================
-// READ OCR RESULT
-// ============================================================
-
-ifstream ocrFile("ocr_result.txt");
-
-if (!ocrFile)
-{
-    cout << "ERROR: Could not open OCR result file."
-         << endl;
-
-    return "";
-}
-
-string text;
-string line;
-
-while (getline(ocrFile, line))
-{
-    text += line + " ";
-}
-
-ocrFile.close();
-
-return text;
-}   
-

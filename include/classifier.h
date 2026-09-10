@@ -3,10 +3,11 @@
 
 #include <string>
 
+// Classifies desktop activity based on application name, window title, URL, and OCR text
 std::string classifyContent(
     const std::string &application,
     const std::string &windowTitle,
-    const std::string &ocrText = "",
-    const std::string &browserUrl = "");
+    const std::string &browserUrl = "",
+    const std::string &ocrText = "");
 
 #endif

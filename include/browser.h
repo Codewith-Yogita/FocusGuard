@@ -12,16 +12,22 @@ struct BrowserInfo
     bool isYouTubeHistory = false;
     bool isYouTubeHome = false;
 
+    std::string browserName;
     std::string url;
     std::string pageTitle;
 };
 
-BrowserInfo detectBrowserContext(HWND hwnd);
+// Returns true if the process name corresponds to a supported browser (Edge, Chrome, Brave, etc.)
+bool isSupportedBrowser(const std::string &appName);
 
-std::string getBrowserUrl(HWND hwnd);
+// Detects URL and context from a browser window handle
+BrowserInfo detectBrowserContext(HWND hwnd, const std::string &appName);
 
+// Extracts active tab URL via UI Automation
+std::string getBrowserUrl(HWND hwnd, const std::string &appName = "");
+
+// YouTube URL helpers
 bool isYouTubeUrl(const std::string &url);
-
 bool isYouTubeShorts(const std::string &url);
 
 #endif
