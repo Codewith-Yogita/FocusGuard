@@ -1,127 +1,79 @@
-from email.mime import image
+"""
+FocusGuard AI Screen Capture Test (Qwen 2.5-VL)
+"""
 
-import dxcam
-import cv2
 import os
 import time
 import base64
 import json
+import re
+import cv2
 import requests
+import numpy as np
 
+try:
+    import dxcam
+    HAS_DXCAM = True
+except ImportError:
+    HAS_DXCAM = False
+
+from PIL import ImageGrab
 
 print("=" * 40)
-print("     FOCUS GUARD AI SCREEN TEST")
+print("     FOCUS GUARD QWEN 2.5-VL TEST")
 print("=" * 40)
-
-
-# -----------------------------------------
-# CONFIGURATION
-# -----------------------------------------
 
 SAVE_DIR = "screen_frames"
 os.makedirs(SAVE_DIR, exist_ok=True)
 
-OLLAMA_URL = "http://localhost:11434/api/chat"
-MODEL = "gemma3:4b"
-
+OLLAMA_URL = "http://127.0.0.1:11434/api/chat"
+MODEL = "qwen2.5vl:3b"
 CHANGE_THRESHOLD = 8.0
-
-# Analyze at most once every 5 seconds
 AI_COOLDOWN = 5
 
-# -----------------------------------------
-# SCREEN CAPTURE
-# -----------------------------------------
 
-camera = dxcam.create()
+def grab_desktop_frame():
+    """Captures a frame using PIL/dxcam."""
+    img = ImageGrab.grab()
+    return cv2.cvtColor(np.array(img), cv2.COLOR_RGB2BGR)
 
-camera.start(target_fps=5)
-
-previous_frame = None
-
-frame_count = 0
-saved_count = 0
-
-last_ai_time = 0
-
-
-# -----------------------------------------
-# GEMMA SCREEN ANALYSIS
-# -----------------------------------------
 
 def analyze_screen(image_path):
-
-    print("[AI] Analyzing screen...")
-
+    print("[AI] Analyzing screen with Qwen 2.5-VL...")
     try:
-
         image = cv2.imread(image_path)
-        image = cv2.resize(
-             image,
-              (960, 540)
-        )
+        if image is None:
+            return None
 
-        success, encoded_image = cv2.imencode(
-             ".jpg",
-              image,
-                [cv2.IMWRITE_JPEG_QUALITY, 70]
-        )
+        h, w = image.shape[:2]
+        target_w = 1024
+        target_h = int(h * (target_w / w))
+        resized = cv2.resize(image, (target_w, target_h))
 
+        success, encoded = cv2.imencode(".jpg", resized, [cv2.IMWRITE_JPEG_QUALITY, 75])
         if not success:
             print("[AI ERROR] Failed to encode image.")
             return None
 
-        image_base64 = base64.b64encode(
-              encoded_image.tobytes()
-        ).decode("utf-8")
+        image_base64 = base64.b64encode(encoded.tobytes()).decode("utf-8")
 
-        print("[AI] Image size:", len(image_base64) / 1024, "KB")
-
-        prompt = """
-You are the visual intelligence system of FocusGuard.
-
-Analyze the screenshot and determine what the user is currently doing.
-
-Classify the activity into exactly one of:
-
+        prompt = """You are the visual intelligence system of FocusGuard.
+Analyze the screenshot and classify the activity into exactly one of:
 PRODUCTIVE
 DISTRACTION
 NEUTRAL
 UNKNOWN
 
-Focus on the actual visual content of the screen.
-
-Examples:
-
-- Programming / coding / DSA → PRODUCTIVE
-- Educational lecture → PRODUCTIVE
-- Documentation / technical research → PRODUCTIVE
-- YouTube Shorts → DISTRACTION
-- Instagram Reels → DISTRACTION
-- Entertainment videos → DISTRACTION
-- Casual social media browsing → DISTRACTION
-- Normal desktop / unclear content → NEUTRAL or UNKNOWN
-
-IMPORTANT:
-Do not decide only from the application name or window title.
-Use the actual visual content visible in the screenshot.
-
 Return ONLY valid JSON in this exact format:
-
 {
   "activity": "short description",
   "classification": "PRODUCTIVE",
   "confidence": 0.95,
   "reason": "short explanation"
-}
-
-Confidence must be between 0 and 1.
-"""
-
+}"""
 
         payload = {
             "model": MODEL,
-
             "messages": [
                 {
                     "role": "user",
@@ -129,269 +81,84 @@ Confidence must be between 0 and 1.
                     "images": [image_base64]
                 }
             ],
-
             "stream": False,
-
-            "options": {
-                "temperature": 0
-            }
+            "options": {"temperature": 0.0}
         }
 
-
-        response = requests.post(
-            OLLAMA_URL,
-            json=payload,
-            timeout=60
-        )
-
-
+        response = requests.post(OLLAMA_URL, json=payload, timeout=30)
         if response.status_code != 200:
-
-            print(
-                f"[AI ERROR] Ollama returned "
-                f"{response.status_code}"
-            )
-
-            print(response.text)
-
+            print(f"[AI ERROR] Ollama returned {response.status_code}")
             return None
-
 
         data = response.json()
+        raw_response = data.get("message", {}).get("content", "").strip()
 
-        raw_response = data["message"]["content"].strip()
-
-        print("[AI RAW]")
-        print(raw_response)
-
-        # -----------------------------------------
-        # CLEAN GEMMA RESPONSE
-        # -----------------------------------------
-
-        if raw_response.startswith("```"):
-            raw_response = raw_response.replace(
-                "```json",
-                ""
-            )
-
-            raw_response = raw_response.replace(
-                "```",
-                ""
-            )
-
-            raw_response = raw_response.strip()
-
-        # -----------------------------------------
-        # PARSE JSON
-        # -----------------------------------------
-
-        try:
-
-            result = json.loads(raw_response)
-
-            print()
-            print("[AI RESULT]")
-            print(
-            "Activity      :",
-            result.get("activity", "Unknown")
-        )
-
-            print(
-            "Classification :",
-            result.get("classification", "UNKNOWN")
-        )
-
-            print(
-            "Confidence     :",
-            result.get("confidence", 0)
-        )
-
-            print(
-            "Reason         :",
-            result.get("reason", "")
-        )
-
-            print()
-
-            return result
-
-        except json.JSONDecodeError:
-
-            print("[AI ERROR] Gemma returned invalid JSON.")
-
+        json_match = re.search(r"\{[\s\S]*\}", raw_response)
+        if not json_match:
+            print(f"[AI ERROR] Invalid JSON: {raw_response}")
             return None
 
-        except Exception as e:
-            print("[AI ERROR]", e)
-            return None
+        result = json.loads(json_match.group(0))
+        print("\n[AI RESULT]")
+        print("Activity      :", result.get("activity", "Unknown"))
+        print("Classification :", result.get("classification", "UNKNOWN"))
+        print("Confidence     :", result.get("confidence", 0))
+        print("Reason         :", result.get("reason", ""))
+        print()
+        return result
 
     except Exception as e:
-        print(f"[AI ERROR] Failed to analyze screen: {e}")
+        print(f"[AI ERROR] {e}")
         return None
 
 
-# -----------------------------------------
-# START
-# -----------------------------------------
+def main():
+    print("Starting capture test...")
+    previous_frame = None
+    saved_count = 0
+    last_ai_time = 0
 
-print("Starting capture...")
-print("Switch between VS Code, YouTube, etc.")
-print("Press Ctrl+C to stop.\n")
-
-
-try:
-
-    while True:
-
-        frame = camera.get_latest_frame()
-
-
-        if frame is None:
-
-            time.sleep(0.1)
-
-            continue
-
-
-        frame_count += 1
-
-
-        # -----------------------------------------
-        # FIRST FRAME
-        # -----------------------------------------
-
-        if previous_frame is None:
-
-            previous_frame = frame.copy()
-
-            filename = os.path.join(
-                SAVE_DIR,
-                f"ai_frame_{saved_count:04d}.jpg"
-            )
-
-            cv2.imwrite(
-                filename,
-                frame
-            )
-
-            saved_count += 1
-
-            print(
-                "[INIT] First frame captured"
-            )
-
-            # Analyze first frame
-            analyze_screen(filename)
-
-            last_ai_time = time.time()
-
-            time.sleep(0.2)
-
-            continue
-
-
-        # -----------------------------------------
-        # SCREEN CHANGE DETECTION
-        # -----------------------------------------
-
-        current_small = cv2.resize(
-            frame,
-            (320, 180)
-        )
-
-        previous_small = cv2.resize(
-            previous_frame,
-            (320, 180)
-        )
-
-
-        current_gray = cv2.cvtColor(
-            current_small,
-            cv2.COLOR_BGR2GRAY
-        )
-
-        previous_gray = cv2.cvtColor(
-            previous_small,
-            cv2.COLOR_BGR2GRAY
-        )
-
-
-        difference = cv2.absdiff(
-            current_gray,
-            previous_gray
-        )
-
-        change_score = difference.mean()
-
-
-        # -----------------------------------------
-        # MEANINGFUL SCREEN CHANGE
-        # -----------------------------------------
-
-        if change_score >= CHANGE_THRESHOLD:
-
-            previous_frame = frame.copy()
+    try:
+        while True:
+            frame = grab_desktop_frame()
+            if frame is None:
+                time.sleep(0.1)
+                continue
 
             current_time = time.time()
 
-
-            print(
-                f"\n[SCREEN CHANGE] "
-                f"{change_score:.2f}"
-            )
-
-
-            # -----------------------------------------
-            # AI COOLDOWN
-            # -----------------------------------------
-
-            if current_time - last_ai_time >= AI_COOLDOWN:
-
+            if previous_frame is None:
+                previous_frame = frame.copy()
+                filename = os.path.join(SAVE_DIR, f"qwen_frame_{saved_count:04d}.jpg")
+                cv2.imwrite(filename, frame)
                 saved_count += 1
+                analyze_screen(filename)
+                last_ai_time = current_time
+                time.sleep(0.5)
+                continue
 
-                filename = os.path.join(
-                    SAVE_DIR,
-                    f"ai_frame_{saved_count:04d}.jpg"
-                )
+            # Screen change comparison
+            curr_small = cv2.resize(frame, (320, 180))
+            prev_small = cv2.resize(previous_frame, (320, 180))
+            curr_gray = cv2.cvtColor(curr_small, cv2.COLOR_BGR2GRAY)
+            prev_gray = cv2.cvtColor(prev_small, cv2.COLOR_BGR2GRAY)
 
+            change_score = cv2.absdiff(curr_gray, prev_gray).mean()
 
-                cv2.imwrite(
-                    filename,
-                    frame
-                )
-
-
-                print(
-                    f"[CAPTURE] Saved {filename}"
-                )
-
-
-                result = analyze_screen(
-                    filename
-                )
-
-
+            if change_score >= CHANGE_THRESHOLD and (current_time - last_ai_time >= AI_COOLDOWN):
+                previous_frame = frame.copy()
+                saved_count += 1
+                filename = os.path.join(SAVE_DIR, f"qwen_frame_{saved_count:04d}.jpg")
+                cv2.imwrite(filename, frame)
+                print(f"\n[SCREEN CHANGE] {change_score:.2f} -> Saved {filename}")
+                analyze_screen(filename)
                 last_ai_time = current_time
 
+            time.sleep(0.2)
 
-        time.sleep(0.2)
-
-
-except KeyboardInterrupt:
-
-    print("\nStopping...")
+    except KeyboardInterrupt:
+        print("\nCapture stopped.")
 
 
-finally:
-
-    camera.stop()
-
-    print("\nCapture stopped.")
-
-    print(
-        f"Frames checked : {frame_count}"
-    )
-
-    print(
-        f"AI screenshots : {saved_count}"
-    )
+if __name__ == "__main__":
+    main()

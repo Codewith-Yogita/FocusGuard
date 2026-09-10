@@ -1,7 +1,20 @@
 #include "../include/restriction.h"
 
+#include <algorithm>
+#include <cctype>
+
 using namespace std;
 using namespace chrono;
+
+static string normalize(string text)
+{
+    transform(
+        text.begin(),
+        text.end(),
+        text.begin(),
+        [](unsigned char c) { return static_cast<char>(tolower(c)); });
+    return text;
+}
 
 // ============================================================
 // START RESTRICTION
@@ -13,23 +26,15 @@ void RestrictionManager::restrictApplication(
     HWND windowHandle)
 {
     Restriction restriction;
+    restriction.restrictedUntil = steady_clock::now() + seconds(cooldownSeconds);
+    restriction.windowHandle = windowHandle;
 
-    restriction.restrictedUntil =
-        steady_clock::now() +
-        seconds(cooldownSeconds);
+    restrictions[normalize(application)] = restriction;
 
-    restriction.windowHandle =
-        windowHandle;
-
-    restrictions[application] =
-        restriction;
-
-    // Immediately minimize the distracting window.
+    // Immediately minimize the distracting window if provided
     if (windowHandle != NULL)
     {
-        ShowWindow(
-            windowHandle,
-            SW_MINIMIZE);
+        ShowWindow(windowHandle, SW_MINIMIZE);
     }
 }
 
@@ -40,16 +45,13 @@ void RestrictionManager::restrictApplication(
 bool RestrictionManager::isRestricted(
     const string &application) const
 {
-    auto it =
-        restrictions.find(application);
-
+    auto it = restrictions.find(normalize(application));
     if (it == restrictions.end())
     {
         return false;
     }
 
-    if (steady_clock::now() >=
-        it->second.restrictedUntil)
+    if (steady_clock::now() >= it->second.restrictedUntil)
     {
         return false;
     }
@@ -64,38 +66,28 @@ bool RestrictionManager::isRestricted(
 void RestrictionManager::enforceRestriction(
     const string &application)
 {
-    auto it =
-        restrictions.find(application);
-
+    auto it = restrictions.find(normalize(application));
     if (it == restrictions.end())
     {
         return;
     }
 
-    // Restriction expired.
-    if (steady_clock::now() >=
-        it->second.restrictedUntil)
+    if (steady_clock::now() >= it->second.restrictedUntil)
     {
         return;
     }
 
-    HWND hwnd =
-        it->second.windowHandle;
-
+    HWND hwnd = it->second.windowHandle;
     if (hwnd == NULL)
     {
         return;
     }
 
-    // If the restricted window is brought back,
-    // minimize it again.
     if (IsWindowVisible(hwnd))
     {
         if (GetForegroundWindow() == hwnd)
         {
-            ShowWindow(
-                hwnd,
-                SW_MINIMIZE);
+            ShowWindow(hwnd, SW_MINIMIZE);
         }
     }
 }
@@ -107,7 +99,7 @@ void RestrictionManager::enforceRestriction(
 void RestrictionManager::clearRestriction(
     const string &application)
 {
-    restrictions.erase(application);
+    restrictions.erase(normalize(application));
 }
 
 // ============================================================
@@ -117,24 +109,17 @@ void RestrictionManager::clearRestriction(
 long long RestrictionManager::remainingSeconds(
     const string &application) const
 {
-    auto it =
-        restrictions.find(application);
-
+    auto it = restrictions.find(normalize(application));
     if (it == restrictions.end())
     {
         return 0;
     }
 
-    auto now =
-        steady_clock::now();
-
-    if (now >=
-        it->second.restrictedUntil)
+    auto now = steady_clock::now();
+    if (now >= it->second.restrictedUntil)
     {
         return 0;
     }
 
-    return duration_cast<seconds>(
-        it->second.restrictedUntil - now)
-        .count();
+    return duration_cast<seconds>(it->second.restrictedUntil - now).count();
 }

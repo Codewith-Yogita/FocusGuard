@@ -1,8 +1,12 @@
 #include "../include/ocr.h"
+#include "../include/user_identity.h"
 #include "../include/policy.h"
 #include "../include/classifier.h"
 #include "../include/restriction.h"
 #include "../include/browser.h"
+#include "../include/enforcement.h"
+#include "../include/ai_client.h"
+#include "../include/face_auth.h"
 
 #include <fstream>
 #include <iostream>
@@ -17,21 +21,22 @@
 using namespace std;
 using namespace chrono;
 
+enum class UserIdentity {
+    USER,
+    GUEST
+};
+
 // ============================================================
 // TEXT UTILITY
 // ============================================================
 
-string toLowerCase(string text)
+static string toLower(string text)
 {
     transform(
         text.begin(),
         text.end(),
         text.begin(),
-        [](unsigned char c)
-        {
-            return static_cast<char>(tolower(c));
-        });
-
+        [](unsigned char c) { return static_cast<char>(tolower(c)); });
     return text;
 }
 
@@ -39,10 +44,9 @@ string toLowerCase(string text)
 // FOCUS GUARD SETTINGS
 // ============================================================
 
-const int WARNING_TIME = 5;
-const int STRONG_WARNING_TIME = 10;
-const int INTERVENTION_TIME = 15;
-const int OCR_INTERVAL = 5;
+const int WARNING_TIME = 10;
+const int STRONG_WARNING_TIME = 30;
+const int OCR_AI_INTERVAL = 5;
 
 // ============================================================
 // GET ACTIVE WINDOW
@@ -54,967 +58,569 @@ HWND getActiveWindowHandle()
 }
 
 // ============================================================
-// GET WINDOW TITLE
+// GET WINDOW TITLE (UTF-8 SAFE)
 // ============================================================
 
 string getWindowTitle(HWND hwnd)
 {
     if (hwnd == NULL)
-        return "Unknown";
+        return "Desktop / No Focused Window";
 
-    char title[512] = {};
-
-    int length = GetWindowTextA(
-        hwnd,
-        title,
-        sizeof(title));
-
+    wchar_t wTitle[512] = {};
+    int length = GetWindowTextW(hwnd, wTitle, sizeof(wTitle) / sizeof(wchar_t));
     if (length == 0)
-        return "Unknown";
+    {
+        char className[256] = {};
+        if (GetClassNameA(hwnd, className, sizeof(className)) > 0)
+        {
+            string cls(className);
+            if (cls == "Progman" || cls == "WorkerW")
+                return "Windows Desktop";
+            if (cls == "Shell_TrayWnd")
+                return "Taskbar";
+        }
+        return "Active Window (No Title)";
+    }
 
-    return string(title);
+    int sizeNeeded = WideCharToMultiByte(CP_UTF8, 0, wTitle, length, nullptr, 0, nullptr, nullptr);
+    if (sizeNeeded > 0)
+    {
+        string utf8Title(sizeNeeded, '\0');
+        WideCharToMultiByte(CP_UTF8, 0, wTitle, length, &utf8Title[0], sizeNeeded, nullptr, nullptr);
+        return utf8Title;
+    }
+
+    return "Active Window";
 }
 
 // ============================================================
-// GET ACTIVE APPLICATION
+// GET ACTIVE APPLICATION (MODERN WIN32 API + UWP SUPPORT)
 // ============================================================
 
 string getActiveApplication(HWND hwnd)
 {
     if (hwnd == NULL)
-        return "Unknown";
+        return "System / Idle";
 
     DWORD processId = 0;
-
-    GetWindowThreadProcessId(
-        hwnd,
-        &processId);
-
+    GetWindowThreadProcessId(hwnd, &processId);
     if (processId == 0)
-        return "Unknown";
+        return "System / Idle";
 
     HANDLE process = OpenProcess(
-        PROCESS_QUERY_INFORMATION | PROCESS_VM_READ,
+        PROCESS_QUERY_LIMITED_INFORMATION,
         FALSE,
         processId);
 
     if (process == NULL)
-        return "Unknown";
+    {
+        char className[256] = {};
+        if (GetClassNameA(hwnd, className, sizeof(className)) > 0)
+        {
+            string cls(className);
+            if (cls == "Progman" || cls == "WorkerW" || cls == "Shell_TrayWnd")
+                return "explorer.exe";
+        }
+        return "System Process";
+    }
 
     char processPath[MAX_PATH] = {};
+    DWORD size = MAX_PATH;
 
-    DWORD length = GetModuleFileNameExA(
+    BOOL success = QueryFullProcessImageNameA(
         process,
-        NULL,
+        0,
         processPath,
-        MAX_PATH);
+        &size);
 
     CloseHandle(process);
 
-    if (length == 0)
-        return "Unknown";
+    if (!success || size == 0)
+        return "System Process";
 
     string fullPath(processPath);
+    size_t position = fullPath.find_last_of("\\/");
+    string exeName = (position != string::npos) ? fullPath.substr(position + 1) : fullPath;
 
-    size_t position =
-        fullPath.find_last_of("\\/");
-
-    if (position != string::npos)
+    // Unwrap UWP / Windows Store apps
+    string lowerExe = toLower(exeName);
+    if (lowerExe == "applicationframehost.exe")
     {
-        return fullPath.substr(position + 1);
+        HWND child = FindWindowExA(hwnd, NULL, "Windows.UI.Core.CoreWindow", NULL);
+        if (child != NULL)
+        {
+            DWORD childPid = 0;
+            GetWindowThreadProcessId(child, &childPid);
+            if (childPid != 0 && childPid != processId)
+            {
+                HANDLE childProc = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, childPid);
+                if (childProc != NULL)
+                {
+                    char childPath[MAX_PATH] = {};
+                    DWORD childSize = MAX_PATH;
+                    if (QueryFullProcessImageNameA(childProc, 0, childPath, &childSize) && childSize > 0)
+                    {
+                        string cPath(childPath);
+                        size_t cPos = cPath.find_last_of("\\/");
+                        exeName = (cPos != string::npos) ? cPath.substr(cPos + 1) : cPath;
+                    }
+                    CloseHandle(childProc);
+                }
+            }
+        }
     }
 
-    return fullPath;
+    return exeName;
 }
 
 // ============================================================
-// CONVERT APPLICATION NAME
-// ============================================================
-//
-// Windows gives us:
-//
-//     msedge.exe
-//
-// But policies are stored as:
-//
-//     YouTube
-//     Instagram
-//     Snapchat
-//
-// This function maps the active browser page to the logical
-// application/content name used by Focus Guard.
-//
-// NOTE:
-// Browser-specific identification is currently based on the
-// window title. URL-based detection can be integrated later.
+// CONVERT APPLICATION NAME TO LOGICAL APPLICATION
 // ============================================================
 
 string getLogicalApplication(
     const string &application,
     const string &windowTitle)
 {
-    string app = application;
-    string title = windowTitle;
+    string app = toLower(application);
+    string title = toLower(windowTitle);
 
-    app = toLowerCase(app);
-    title = toLowerCase(title);
-
-    // --------------------------------------------------------
-    // Browser based applications
-    // --------------------------------------------------------
-
-    if (app == "msedge.exe")
+    // Browser-hosted web apps
+    if (isSupportedBrowser(app))
     {
-        if (title.find("instagram") != string::npos)
-            return "Instagram";
-
-        if (title.find("snapchat") != string::npos)
-            return "Snapchat";
-
         if (title.find("youtube") != string::npos)
             return "YouTube";
-
+        if (title.find("instagram") != string::npos)
+            return "Instagram";
+        if (title.find("snapchat") != string::npos)
+            return "Snapchat";
+        if (title.find("tiktok") != string::npos)
+            return "TikTok";
         if (title.find("facebook") != string::npos)
             return "Facebook";
-
         if (title.find("whatsapp") != string::npos)
             return "WhatsApp";
-
         if (title.find("linkedin") != string::npos)
             return "LinkedIn";
+        if (title.find("github") != string::npos)
+            return "GitHub";
+        if (title.find("leetcode") != string::npos)
+            return "LeetCode";
+        if (title.find("stackoverflow") != string::npos)
+            return "StackOverflow";
     }
 
-    // --------------------------------------------------------
     // Native applications
-    // --------------------------------------------------------
-
     if (app == "instagram.exe")
         return "Instagram";
-
     if (app == "snapchat.exe")
         return "Snapchat";
-
-    if (app == "code.exe")
+    if (app == "code.exe" || app == "devenv.exe")
         return "VS Code";
+    if (app == "windowsterminal.exe")
+        return "Windows Terminal";
+    if (app == "powershell.exe")
+        return "PowerShell";
+    if (app == "cmd.exe" || app == "conhost.exe")
+        return "Command Prompt";
+    if (app == "discord.exe")
+        return "Discord";
+    if (app == "explorer.exe")
+        return "File Explorer / Desktop";
+    if (app == "system / idle" || app == "system process")
+        return "Desktop / Idle";
 
     return application;
 }
 
 // ============================================================
-// SHOW INTERVENTION POPUP
+// MAIN MONITORING DAEMON
 // ============================================================
 
-void showInterventionPopup(
-    HWND distractingWindow,
-    const string &application,
-    long long distractionSeconds)
+int main(int argc, char *argv[])
 {
-    string message =
-        "Focus Guard noticed that you have been using " +
-        application +
-        " for " +
-        to_string(distractionSeconds) +
-        " seconds.\n\n"
-        "You chose to restrict this activity.\n"
-        "Time to return to your goal.";
-
-    // --------------------------------------------------------
-    // Bring distracting window forward
-    // --------------------------------------------------------
-
-    if (distractingWindow != NULL)
-    {
-        ShowWindow(
-            distractingWindow,
-            SW_RESTORE);
-
-        SetForegroundWindow(
-            distractingWindow);
-    }
-
-    // --------------------------------------------------------
-    // Show popup
-    // --------------------------------------------------------
-
-    MessageBoxA(
-        distractingWindow,
-        message.c_str(),
-        "Focus Guard - Time to Refocus",
-        MB_OK |
-            MB_ICONWARNING |
-            MB_TOPMOST |
-            MB_SETFOREGROUND);
-
-    // --------------------------------------------------------
-    // Minimize distracting window
-    // --------------------------------------------------------
-
-    if (distractingWindow != NULL)
-    {
-        ShowWindow(
-            distractingWindow,
-            SW_MINIMIZE);
-    }
-}
-
-// ============================================================
-// MAIN
-// ============================================================
-
-int main()
-{
-    cout << "========================================"
-         << endl;
-
-    cout << "        FOCUS GUARD MONITOR"
-         << endl;
-
-    cout << "========================================"
-         << endl;
-
+    cout << "========================================" << endl;
+    cout << "     FOCUS GUARD MONITOR (Qwen 2.5-VL)" << endl;
+    cout << "========================================" << endl;
     cout << endl;
 
-    // ========================================================
-    // POLICY MANAGER
-    // ========================================================
-
+    // Policy & Restriction engines
     PolicyManager policyManager;
     RestrictionManager restrictionManager;
+    EnforcementManager enforcementManager;
+    AIClient aiClient("127.0.0.1", 8765);
+    FaceAuthClient faceClient("127.0.0.1", 8765);
+    FaceAuthManager faceAuthManager(faceClient, policyManager);
+    UserIdentity currentIdentity = UserIdentity::USER;
 
-    // ========================================================
-    // CURRENT DEMO USER POLICY
-    // ========================================================
-    //
-    // These are temporary demo policies.
-    //
-    // Later these will come from the Focus Guard UI/settings.
-    // ========================================================
+    // CLI Arguments Handling
+    bool startLocked = false;
+    for (int i = 1; i < argc; ++i)
+    {
+        string arg = argv[i];
+        if (arg == "--help" || arg == "-h")
+        {
+            cout << "FocusGuard Monitor CLI Options:\n"
+                 << "  --enroll          Enroll webcam face biometrics (interactive)\n"
+                 << "  --reset-face      Reset enrolled face biometrics\n"
+                 << "  --lock            Start FocusGuard in locked state\n"
+                 << "  --pin <pin>       Set or update fallback PIN\n"
+                 << "  --no-face-auth    Disable face authentication gating\n"
+                 << "  --help, -h        Display this help message\n"
+                 << endl;
+            return 0;
+        }
+        else if (arg == "--enroll")
+        {
+            bool enrolled = faceAuthManager.runInteractiveEnrollment();
+            return enrolled ? 0 : 1;
+        }
+        else if (arg == "--reset-face")
+        {
+            cout << "[FaceAuth] Resetting face enrollment..." << endl;
+            bool ok = faceClient.resetEnrollment("default");
+            if (ok)
+                cout << "[FaceAuth] Face template reset successfully." << endl;
+            else
+                cout << "[FaceAuth Error] Failed to reset face template." << endl;
+            return ok ? 0 : 1;
+        }
+        else if (arg == "--pin" && i + 1 < argc)
+        {
+            string newPin = argv[++i];
+            policyManager.setFallbackPin(newPin);
+            cout << "[FaceAuth] Fallback PIN updated successfully to: " << newPin << endl;
+        }
+        else if (arg == "--lock")
+        {
+            startLocked = true;
+        }
+        else if (arg == "--no-face-auth")
+        {
+            FaceAuthConfig cfg = policyManager.getFaceAuthConfig();
+            cfg.enabled = false;
+            policyManager.setFaceAuthConfig(cfg);
+            cout << "[FaceAuth] Face authentication disabled via CLI." << endl;
+        }
+    }
 
-    // --------------------------------------------------------
-    // Instagram completely restricted
-    // --------------------------------------------------------
+    // Check AI bridge health
+    cout << "[AI] Probing local Qwen 2.5-VL vision bridge..." << endl;
+    if (aiClient.checkHealth())
+    {
+        cout << "[AI] Connected to FocusGuard AI Bridge (port 8765)." << endl;
+    }
+    else
+    {
+        cout << "[AI Notice] AI bridge offline at 127.0.0.1:8765. (Will use Win32 & OCR heuristics)." << endl;
+        cout << "            To start vision AI: python tools/focusguard_ai.py --serve" << endl;
+    }
 
-    policyManager.addPolicy(
-        "Instagram",
-        RestrictionMode::BLOCK,
-        60,
-        10);
-
-    // --------------------------------------------------------
-    // Snapchat completely restricted
-    // --------------------------------------------------------
-
-    policyManager.addPolicy(
-        "Snapchat",
-        RestrictionMode::BLOCK,
-        60,
-        10);
-
-    // --------------------------------------------------------
-    // YouTube content-aware
-    // --------------------------------------------------------
-    //
-    // Normal videos are allowed.
-    // Shorts are classified as distraction.
-    //
-    // --------------------------------------------------------
-
-    policyManager.addPolicy(
-        "YouTube",
-        RestrictionMode::CONTENT_AWARE,
-        10,
-        10);
+    // Default distraction policies
+    policyManager.addPolicy("Instagram", RestrictionMode::BLOCK, 60, 120);
+    policyManager.addPolicy("Snapchat", RestrictionMode::BLOCK, 60, 120);
+    policyManager.addPolicy("TikTok", RestrictionMode::BLOCK, 60, 120);
+    policyManager.addPolicy("YouTube", RestrictionMode::CONTENT_AWARE, 60, 120);
 
     policyManager.displayPolicies();
-
     cout << endl;
 
-    // ========================================================
-    // ACTIVITY STATE
-    // ========================================================
+    // Startup Face Auth Gate
+    if (policyManager.getFaceAuthConfig().enabled)
+    {
+        enforcementManager.pauseEnforcement();
+        if (startLocked)
+        {
+            faceAuthManager.triggerLock("CLI requested lock");
+            faceAuthManager.showLockScreenModal("FocusGuard starting in locked mode.");
+        }
+        else
+        {
+            bool authed = faceAuthManager.runStartupGate();
+            if (!authed)
+            {
+                cout << "[FocusGuard] Authentication was not completed. Exiting daemon." << endl;
+                return 1;
+            }
+        }
+        enforcementManager.resumeEnforcement();
+    }
 
+    // Tracking state
     string previousActivity = "";
-    string previousClassification = "";
-
-    auto activityStartTime =
-        steady_clock::now();
-
-    // ========================================================
-    // DISTRACTION SESSION
-    // ========================================================
+    auto activityStartTime = steady_clock::now();
 
     bool distractionActive = false;
-
     steady_clock::time_point distractionStartTime;
-
     long long distractionStreak = 0;
-
-    // ========================================================
-    // WARNING STATE
-    // ========================================================
-
     int lastWarningLevel = 0;
 
-    // ========================================================
-    // CUMULATIVE TIME
-    // ========================================================
-
+    // Time totals
     unordered_map<string, long long> activityTime;
-
     unordered_map<string, long long> classificationTime;
 
-    // ========================================================
-    // LOOP
-    // ========================================================
-
     int loopCount = 0;
-
-    // ========================================================
-    // OCR
-    // ========================================================
-
-    auto lastOCRTime =
-        steady_clock::now();
-
+    auto lastAITime = steady_clock::now();
+    auto lastPresenceCheck = steady_clock::now();
     string ocrText = "";
 
-    // ========================================================
-    // MAIN MONITORING LOOP
-    // ========================================================
+    cout << ">>> FocusGuard monitoring started. Press Ctrl+C to exit.\n" << endl;
 
     while (true)
     {
-        // ====================================================
-        // GET CURRENT WINDOW
-        // ====================================================
+        // Check Windows session lock / screensaver
+        BOOL isScreensaver = FALSE;
+        SystemParametersInfo(SPI_GETSCREENSAVERRUNNING, 0, &isScreensaver, 0);
+        HDESK hDesk = OpenInputDesktop(0, FALSE, DESKTOP_SWITCHDESKTOP);
+        bool isDesktopLocked = (hDesk == NULL);
+        if (hDesk)
+            CloseDesktop(hDesk);
 
-        HWND hwnd =
-            getActiveWindowHandle();
-
-        string application =
-            getActiveApplication(hwnd);
-
-        string windowTitle =
-            getWindowTitle(hwnd);
-
-        // ====================================================
-        // BROWSER CONTEXT
-        // ====================================================
-        //
-        // Currently using Microsoft Edge browser context.
-        //
-        // detectBrowserContext() is responsible for identifying
-        // YouTube / Shorts / History and other browser context.
-        // ====================================================
-
-        BrowserInfo browserInfo;
-
-        if (application == "msedge.exe")
+        if ((isScreensaver || isDesktopLocked) && !faceAuthManager.isLocked() && policyManager.getFaceAuthConfig().enabled)
         {
-            browserInfo =
-                detectBrowserContext(hwnd);
+            faceAuthManager.triggerLock("Windows Workstation / Screensaver Locked");
         }
 
-        // ====================================================
-        // GET LOGICAL APPLICATION
-        // ====================================================
-
-        string logicalApplication =
-            getLogicalApplication(
-                application,
-                windowTitle);
-
-        // ====================================================
-        // OCR
-        // ====================================================
-        //
-        // OCR is only attempted when:
-        //
-        // 1. Microsoft Edge is active
-        // 2. Window title alone cannot classify the content
-        // 3. OCR interval has elapsed
-        //
-        // ====================================================
-
-        if (application == "msedge.exe")
+        // Periodic presence heartbeat (every 5 seconds)
+        if (policyManager.getFaceAuthConfig().enabled && !faceAuthManager.isLocked())
         {
-            string titleClassification =
-                classifyContent(
-                    application,
-                    windowTitle,
-                    "");
-
-            if (titleClassification == "UNKNOWN")
+            if (duration_cast<seconds>(steady_clock::now() - lastPresenceCheck).count() >= 5)
             {
-                auto now =
-                    steady_clock::now();
+                lastPresenceCheck = steady_clock::now();
+                faceAuthManager.checkPresenceHeartbeat();
 
-                long long secondsSinceOCR =
-                    duration_cast<seconds>(
-                        now - lastOCRTime)
-                        .count();
-
-                if (secondsSinceOCR >= OCR_INTERVAL)
+                if (faceAuthManager.isUserPresent())
                 {
-                    cout << endl;
-
-                    cout << "[OCR] Scanning screen..."
-                         << endl;
-
-                    ocrText =
-                        captureScreenOCR();
-
-                    lastOCRTime =
-                        now;
-
-                    if (!ocrText.empty())
+                    if (currentIdentity != UserIdentity::USER)
                     {
-                        cout
-                            << "[OCR] Screen content detected."
-                            << endl;
+                        cout << "\n[Identity] USER detected. FocusGuard active." << endl;
                     }
-                    else
+                    currentIdentity = UserIdentity::USER;
+                }
+                else
+                {
+                    if (currentIdentity != UserIdentity::GUEST)
                     {
-                        cout
-                            << "[OCR] No text detected."
-                            << endl;
+                        cout << "\n[Identity] GUEST detected. Personal restrictions paused." << endl;
                     }
+                    currentIdentity = UserIdentity::GUEST;
+                }
+            }
+        }
+
+        // If locked, block monitoring and show lock screen
+        if (faceAuthManager.isLocked())
+        {
+            enforcementManager.pauseEnforcement();
+            distractionActive = false;
+            distractionStreak = 0;
+            lastWarningLevel = 0;
+            faceAuthManager.showLockScreenModal("FocusGuard session is locked.");
+            if (!faceAuthManager.isLocked())
+            {
+                enforcementManager.resumeEnforcement();
+                activityStartTime = steady_clock::now();
+            }
+            Sleep(1000);
+            continue;
+        }
+
+        HWND hwnd = getActiveWindowHandle();
+        string application = getActiveApplication(hwnd);
+
+        string windowTitle = getWindowTitle(hwnd);
+
+        // 1. Browser context detection
+        BrowserInfo browserInfo;
+        if (isSupportedBrowser(application))
+        {
+            browserInfo = detectBrowserContext(hwnd, application);
+        }
+
+        // 2. Logical application mapping
+        string logicalApp = getLogicalApplication(application, windowTitle);
+
+        // 3. Fast classification via URL & Title heuristics
+        string classification = classifyContent(
+            application,
+            windowTitle,
+            browserInfo.url,
+            ocrText);
+
+        // YouTube Shorts strict priority rule
+        if (browserInfo.isYouTube && browserInfo.isYouTubeShort)
+        {
+            classification = "DISTRACTION";
+        }
+        else if (browserInfo.isYouTube && browserInfo.isYouTubeHistory)
+        {
+            classification = "NEUTRAL";
+        }
+
+        // 4. AI Vision fallback if classification is UNKNOWN
+        auto now = steady_clock::now();
+        long long secondsSinceAI = duration_cast<seconds>(now - lastAITime).count();
+
+        if (classification == "UNKNOWN" && secondsSinceAI >= OCR_AI_INTERVAL)
+        {
+            lastAITime = now;
+
+            if (aiClient.checkHealth())
+            {
+                cout << "[AI] Querying Qwen 2.5-VL for visual classification..." << endl;
+                AIClassification aiResult = aiClient.requestClassification();
+                if (aiResult.success)
+                {
+                    classification = aiResult.classification;
+                    cout << "[AI Result] " << aiResult.activity
+                         << " -> " << aiResult.classification
+                         << " (" << aiResult.confidence * 100 << "% confidence)" << endl;
                 }
             }
             else
             {
-                ocrText = "";
+                // Fallback to local Tesseract OCR if available
+                ocrText = captureScreenOCR();
+                if (!ocrText.empty())
+                {
+                    classification = classifyContent(application, windowTitle, browserInfo.url, ocrText);
+                }
             }
         }
-        else
+
+        // 5. Check if currently restricted under cooldown
+        bool isAppRestricted =
+            currentIdentity == UserIdentity::USER &&
+            restrictionManager.isRestricted(logicalApp);
+
+        if (isAppRestricted)
         {
-            ocrText = "";
+            long long remaining = restrictionManager.remainingSeconds(logicalApp);
+            cout << "\n[RESTRICTION ACTIVE] " << logicalApp
+                 << " is restricted (" << remaining << "s cooldown remaining)." << endl;
+
+            // Immediately enforce: minimize window without restarting a 60s streak
+            enforcementManager.enforce(
+                hwnd,
+                logicalApp,
+                "This application is currently in its cooldown restriction period.",
+                static_cast<int>(remaining),
+                browserInfo.isBrowser);
+
+            distractionStreak = 0;
+            distractionActive = false;
+            lastWarningLevel = 0;
         }
 
-        // ====================================================
-        // CLASSIFY CONTENT
-        // ====================================================
+        // 6. Policy decision & Distraction streak handling
+        bool policyApplies =
+            currentIdentity == UserIdentity::USER &&
+            policyManager.shouldRestrict(logicalApp, classification);
 
-        string classification;
-
-        // ----------------------------------------------------
-        // YOUTUBE SHORTS
-        // ----------------------------------------------------
-        //
-        // Shorts ALWAYS count as distraction.
-        //
-        // Even if the Short contains:
-        //
-        // DSA
-        // C++
-        // LeetCode
-        // Programming
-        // ISRO
-        // Tutorial
-        //
-        // It is still a Short and therefore a distraction.
-        //
-        // ----------------------------------------------------
-
-        if (
-            browserInfo.isYouTube &&
-            browserInfo.isYouTubeShort)
+        if (classification == "DISTRACTION" && policyApplies && !isAppRestricted)
         {
-            classification =
-                "DISTRACTION";
+            if (!distractionActive)
+            {
+                distractionActive = true;
+                distractionStartTime = steady_clock::now();
+                distractionStreak = 0;
+                lastWarningLevel = 0;
+
+                cout << "\n>>> DISTRACTION DETECTED: " << logicalApp << endl;
+            }
+
+            distractionStreak = duration_cast<seconds>(steady_clock::now() - distractionStartTime).count();
+
+            // 10s Warning
+            if (distractionStreak >= WARNING_TIME && lastWarningLevel < 1)
+            {
+                cout << "\n[WARNING] You have been on " << logicalApp
+                     << " for " << distractionStreak << " seconds." << endl;
+                lastWarningLevel = 1;
+            }
+
+            // 30s Strong Warning
+            if (distractionStreak >= STRONG_WARNING_TIME && lastWarningLevel < 2)
+            {
+                cout << "\n[ALERT] Distraction streak: " << distractionStreak
+                     << "s. Consider returning to work." << endl;
+                lastWarningLevel = 2;
+            }
+
+            // Intervention threshold
+            AppPolicy policy = policyManager.getPolicy(logicalApp);
+            int interventionTime = (policy.maxDurationSeconds > 0) ? policy.maxDurationSeconds : 60;
+
+            if (distractionStreak >= interventionTime && lastWarningLevel < 3)
+            {
+                lastWarningLevel = 3;
+
+                // Start cooldown
+                int cooldown = (policy.cooldownSeconds > 0) ? policy.cooldownSeconds : 120;
+                restrictionManager.restrictApplication(logicalApp, cooldown, hwnd);
+
+                // Non-blocking enforcement
+                enforcementManager.enforce(
+                    hwnd,
+                    logicalApp,
+                    "Maximum allotted time (" + to_string(interventionTime) + "s) exceeded.",
+                    cooldown,
+                    browserInfo.isBrowser);
+
+                distractionActive = false;
+                distractionStreak = 0;
+                lastWarningLevel = 0;
+            }
+        }
+        else if (!isAppRestricted)
+        {
+            if (distractionActive)
+            {
+                cout << "\n>>> Returned to focus / distraction ended." << endl;
+            }
+            distractionActive = false;
+            distractionStreak = 0;
+            lastWarningLevel = 0;
         }
 
-        // ----------------------------------------------------
-        // YOUTUBE HISTORY
-        // ----------------------------------------------------
-        //
-        // History is not actual content.
-        //
-        // ----------------------------------------------------
-
-        else if (
-            browserInfo.isYouTube &&
-            browserInfo.isYouTubeHistory)
+        // 7. Robust real-time time accumulation (1-second increments)
+        string currentActivity = logicalApp + " | " + windowTitle;
+        if (currentIdentity == UserIdentity::USER)
         {
-            classification =
-                "UNKNOWN";
+            activityTime[currentActivity] += 1;
+            classificationTime[classification] += 1;
         }
-
-        // ----------------------------------------------------
-        // EVERYTHING ELSE
-        // ----------------------------------------------------
-
-        else
-        {
-            classification =
-                classifyContent(
-                    application,
-                    windowTitle,
-                    ocrText);
-        }
-
-        // ====================================================
-        // POLICY DECISION
-        // ====================================================
-
-        string policyApplication =
-            logicalApplication;
-
-        bool policyWantsRestriction =
-            policyManager.shouldRestrict(
-                policyApplication,
-                classification);
-
-        bool currentlyRestricted =
-            restrictionManager.isRestricted(
-                policyApplication);
-
-        if (currentlyRestricted)
-        {
-            restrictionManager.enforceRestriction(
-                policyApplication);
-        }
-
-        bool shouldRestrict =
-            policyWantsRestriction ||
-            currentlyRestricted;
-
-        // ----------------------------------------------------
-        // SHOW CURRENT RESTRICTION
-        // ----------------------------------------------------
-
-        if (currentlyRestricted)
-        {
-            cout << endl;
-
-            cout
-                << "!!! APPLICATION CURRENTLY RESTRICTED !!!"
-                << endl;
-
-            cout
-                << "Application: "
-                << policyApplication
-                << endl;
-
-            cout
-                << "Remaining cooldown: "
-                << restrictionManager.remainingSeconds(
-                       policyApplication)
-                << " seconds"
-                << endl;
-        }
-
-        // ====================================================
-        // CREATE UNIQUE ACTIVITY
-        // ====================================================
-
-        string currentActivity =
-            logicalApplication +
-            " | " +
-            windowTitle;
-
-        // ====================================================
-        // HANDLE ACTIVITY CHANGE
-        // ====================================================
 
         if (currentActivity != previousActivity)
         {
-            if (!previousActivity.empty())
-            {
-                auto now =
-                    steady_clock::now();
-
-                long long elapsed =
-                    duration_cast<seconds>(
-                        now - activityStartTime)
-                        .count();
-
-                activityTime[previousActivity] += elapsed;
-
-                classificationTime[previousClassification] += elapsed;
-            }
-
-            previousActivity =
-                currentActivity;
-
-            previousClassification =
-                classification;
-
-            activityStartTime =
-                steady_clock::now();
+            previousActivity = currentActivity;
+            activityStartTime = steady_clock::now();
         }
 
-        // ====================================================
-        // CURRENT ACTIVITY TIME
-        // ====================================================
+        long long elapsedSeconds = duration_cast<seconds>(steady_clock::now() - activityStartTime).count();
 
-        long long elapsedSeconds =
-            duration_cast<seconds>(
-                steady_clock::now() -
-                activityStartTime)
-                .count();
-
-        // ====================================================
-        // DETERMINE WHETHER POLICY APPLIES
-        // ====================================================
-
-        bool policyRestriction =
-            policyManager.shouldRestrict(
-                logicalApplication,
-                classification);
-
-        // ====================================================
-        // DISTRACTION SESSION
-        // ====================================================
-
-        if (
-            classification == "DISTRACTION" &&
-            policyRestriction)
+        // 8. Console summary
+        cout << "\n----------------------------------------" << endl;
+        cout << "Loop           : " << ++loopCount << endl;
+        cout << "Application    : " << application << " (" << logicalApp << ")" << endl;
+        cout << "Identity       : " << (currentIdentity == UserIdentity::USER ? "USER" : "GUEST") << endl;
+        cout << "Title          : " << windowTitle << endl;
+        if (!browserInfo.url.empty())
         {
-            // ------------------------------------------------
-            // START DISTRACTION SESSION
-            // ------------------------------------------------
-
-            if (!distractionActive)
-            {
-                distractionActive =
-                    true;
-
-                distractionStartTime =
-                    steady_clock::now();
-
-                distractionStreak =
-                    0;
-
-                lastWarningLevel =
-                    0;
-
-                cout << endl;
-
-                cout
-                    << ">>> RESTRICTED DISTRACTION DETECTED"
-                    << endl;
-
-                cout
-                    << "Application: "
-                    << logicalApplication
-                    << endl;
-            }
-
-            // ------------------------------------------------
-            // CALCULATE DISTRACTION STREAK
-            // ------------------------------------------------
-
-            distractionStreak =
-                duration_cast<seconds>(
-                    steady_clock::now() -
-                    distractionStartTime)
-                    .count();
-
-            // ------------------------------------------------
-            // WARNING — 10 SECONDS
-            // ------------------------------------------------
-
-            if (
-                distractionStreak >= WARNING_TIME &&
-                lastWarningLevel < 1)
-            {
-                cout << endl;
-
-                cout
-                    << "!!! FOCUS GUARD WARNING !!!"
-                    << endl;
-
-                cout
-                    << logicalApplication
-                    << " has been distracting you for "
-                    << distractionStreak
-                    << " seconds."
-                    << endl;
-
-                lastWarningLevel =
-                    1;
-            }
-
-            // ------------------------------------------------
-            // STRONG WARNING — 30 SECONDS
-            // ------------------------------------------------
-
-            if (
-                distractionStreak >= STRONG_WARNING_TIME &&
-                lastWarningLevel < 2)
-            {
-                cout << endl;
-
-                cout
-                    << "!!! FOCUS GUARD ALERT !!!"
-                    << endl;
-
-                cout
-                    << "You have been distracted for "
-                    << distractionStreak
-                    << " seconds."
-                    << endl;
-
-                cout
-                    << "Consider returning to your task."
-                    << endl;
-
-                lastWarningLevel =
-                    2;
-            }
-
-            // ------------------------------------------------
-            // INTERVENTION — 60 SECONDS
-            // ------------------------------------------------
-
-            if (
-                distractionStreak >= INTERVENTION_TIME &&
-                lastWarningLevel < 3)
-            {
-                cout << endl;
-
-                cout
-                    << "================================"
-                    << endl;
-
-                cout
-                    << "    FOCUS GUARD INTERVENTION"
-                    << endl;
-
-                cout
-                    << "================================"
-                    << endl;
-
-                cout
-                    << "Restricted application: "
-                    << logicalApplication
-                    << endl;
-
-                cout
-                    << "60+ seconds of distraction."
-                    << endl;
-
-                cout
-                    << "Launching refocus popup..."
-                    << endl;
-
-                lastWarningLevel =
-                    3;
-
-                // ------------------------------------------------
-                // SHOW INTERVENTION
-                // ------------------------------------------------
-
-                showInterventionPopup(
-                    hwnd,
-                    logicalApplication,
-                    distractionStreak);
-
-                // =================================================
-                // START APPLICATION COOLDOWN
-                // =================================================
-
-                if (
-                    policyManager.hasPolicy(
-                        policyApplication))
-                {
-                    AppPolicy policy =
-                        policyManager.getPolicy(
-                            policyApplication);
-
-                    restrictionManager.restrictApplication(
-                        policyApplication,
-                        policy.cooldownSeconds,
-                        hwnd);
-
-                    cout << endl;
-
-                    cout
-                        << ">>> RESTRICTION ACTIVATED"
-                        << endl;
-
-                    cout
-                        << "Application: "
-                        << policyApplication
-                        << endl;
-
-                    cout
-                        << "Cooldown: "
-                        << policy.cooldownSeconds
-                        << " seconds"
-                        << endl;
-                }
-
-                // ------------------------------------------------
-                // RESET DISTRACTION SESSION
-                // ------------------------------------------------
-
-                distractionActive =
-                    false;
-
-                distractionStreak =
-                    0;
-
-                lastWarningLevel =
-                    0;
-            }
+            cout << "Browser URL    : " << browserInfo.url << endl;
         }
-        else
-        {
-            // =================================================
-            // USER LEFT RESTRICTED DISTRACTION
-            // =================================================
-
-            if (distractionActive)
-            {
-                cout << endl;
-
-                cout
-                    << ">>> Distraction session ended."
-                    << endl;
-            }
-
-            distractionActive =
-                false;
-
-            distractionStreak =
-                0;
-
-            lastWarningLevel =
-                0;
-        }
-
-        // ====================================================
-        // DISPLAY TOTALS
-        // ====================================================
-
-        long long productiveTime =
-            classificationTime["PRODUCTIVE"];
-
-        long long distractionTime =
-            classificationTime["DISTRACTION"];
-
-        long long neutralTime =
-            classificationTime["NEUTRAL"];
-
-        long long unknownTime =
-            classificationTime["UNKNOWN"];
-
-        // ----------------------------------------------------
-        // ADD CURRENT ACTIVITY TIME
-        // ----------------------------------------------------
-
-        if (classification == "PRODUCTIVE")
-        {
-            productiveTime +=
-                elapsedSeconds;
-        }
-        else if (classification == "DISTRACTION")
-        {
-            distractionTime +=
-                elapsedSeconds;
-        }
-        else if (classification == "NEUTRAL")
-        {
-            neutralTime +=
-                elapsedSeconds;
-        }
-        else
-        {
-            unknownTime +=
-                elapsedSeconds;
-        }
-
-        // ====================================================
-        // DISPLAY CURRENT STATE
-        // ====================================================
-
-        cout << endl;
-
-        cout
-            << "Loop: "
-            << ++loopCount
-            << endl;
-
-        cout
-            << "Application: "
-            << application
-            << endl;
-
-        cout
-            << "Logical App: "
-            << logicalApplication
-            << endl;
-
-        cout
-            << "Window: "
-            << windowTitle
-            << endl;
-
-        cout
-            << "Classification: "
-            << classification
-            << endl;
-
-        cout
-            << "Policy Restriction: "
-            << boolalpha
-            << policyRestriction
-            << endl;
-
-        cout
-            << "Time on current activity: "
-            << elapsedSeconds
-            << " seconds"
-            << endl;
-
+        cout << "Classification : " << classification << endl;
+        cout << "Time on window : " << elapsedSeconds << "s" << endl;
         if (classification == "DISTRACTION")
         {
-            cout
-                << "Distraction streak: "
-                << distractionStreak
-                << " seconds"
-                << endl;
+            cout << "Streak         : " << distractionStreak << "s" << endl;
         }
 
-        cout << endl;
-
-        cout
-            << "========== TODAY'S TOTALS =========="
-            << endl;
-
-        cout
-            << "Productive : "
-            << productiveTime
-            << " seconds"
-            << endl;
-
-        cout
-            << "Distraction: "
-            << distractionTime
-            << " seconds"
-            << endl;
-
-        cout
-            << "Neutral    : "
-            << neutralTime
-            << " seconds"
-            << endl;
-
-        cout
-            << "Unknown    : "
-            << unknownTime
-            << " seconds"
-            << endl;
-
-        cout
-            << "===================================="
-            << endl;
-
-        // ====================================================
-        // WAIT
-        // ====================================================
+        cout << "\n[Totals Today]" << endl;
+        cout << "  Productive   : " << classificationTime["PRODUCTIVE"] << "s" << endl;
+        cout << "  Distraction  : " << classificationTime["DISTRACTION"] << "s" << endl;
+        cout << "  Neutral      : " << classificationTime["NEUTRAL"] << "s" << endl;
+        cout << "  Unknown      : " << classificationTime["UNKNOWN"] << "s" << endl;
+        cout << "----------------------------------------" << endl;
 
         Sleep(1000);
     }

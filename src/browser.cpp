@@ -7,355 +7,241 @@
 #include <cctype>
 #include <string>
 #include <iostream>
+#include <vector>
 
 #pragma comment(lib, "uiautomationcore.lib")
+#pragma comment(lib, "ole32.lib")
+#pragma comment(lib, "oleaut32.lib")
 
 using namespace std;
 
 // ============================================================
-// LOWERCASE
+// LOWERCASE UTILITY
 // ============================================================
 
-static string toLowerCase(string text)
+static string toLower(string text)
 {
     transform(
         text.begin(),
         text.end(),
         text.begin(),
-        [](unsigned char c)
-        {
-            return static_cast<char>(tolower(c));
-        });
-
+        [](unsigned char c) { return static_cast<char>(tolower(c)); });
     return text;
+}
+
+// ============================================================
+// SUPPORTED BROWSER CHECK
+// ============================================================
+
+bool isSupportedBrowser(const string &appName)
+{
+    string app = toLower(appName);
+    return (
+        app == "msedge.exe" ||
+        app == "chrome.exe" ||
+        app == "brave.exe" ||
+        app == "firefox.exe" ||
+        app == "vivaldi.exe" ||
+        app == "opera.exe" ||
+        app == "arc.exe");
 }
 
 // ============================================================
 // GET BROWSER URL
 // ============================================================
 
-string getBrowserUrl(HWND hwnd)
+string getBrowserUrl(HWND hwnd, const string &appName)
 {
     if (hwnd == NULL)
         return "";
 
-    // --------------------------------------------------------
-    // Initialize COM
-    // --------------------------------------------------------
+    HRESULT hr = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
+    bool shouldUninit = (hr == S_OK || hr == S_FALSE);
 
-    HRESULT hr = CoInitializeEx(
-        nullptr,
-        COINIT_APARTMENTTHREADED);
-
-    bool comInitialized = SUCCEEDED(hr);
-
-    if (FAILED(hr) && hr != RPC_E_CHANGED_MODE)
-        return "";
-
-    // --------------------------------------------------------
-    // Get UI Automation CLSID
-    // --------------------------------------------------------
-    //
-    // CLSID_CUIAutomation:
-    //
-    // FF48DBA4-60EF-4201-AA87-54103EEF594E
-    //
-    // We use CLSIDFromString instead of directly referencing
-    // CLSID_CUIAutomation because MinGW may not export the
-    // symbol in the same way as MSVC.
-    // --------------------------------------------------------
-
+    // Get UI Automation instance
     CLSID clsid;
-
-    hr = CLSIDFromString(
-        L"{FF48DBA4-60EF-4201-AA87-54103EEF594E}",
-        &clsid);
-
+    hr = CLSIDFromString(L"{FF48DBA4-60EF-4201-AA87-54103EEF594E}", &clsid);
     if (FAILED(hr))
     {
-        if (comInitialized)
+        if (shouldUninit)
             CoUninitialize();
-
         return "";
     }
-
-    // --------------------------------------------------------
-    // Create UI Automation
-    // --------------------------------------------------------
 
     IUIAutomation *automation = nullptr;
-
-    hr = CoCreateInstance(
-        clsid,
-        nullptr,
-        CLSCTX_INPROC_SERVER,
-        IID_PPV_ARGS(&automation));
-
+    hr = CoCreateInstance(clsid, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&automation));
     if (FAILED(hr) || automation == nullptr)
     {
-        if (comInitialized)
+        if (shouldUninit)
             CoUninitialize();
-
         return "";
     }
 
-    // --------------------------------------------------------
-    // Get browser window element
-    // --------------------------------------------------------
-
     IUIAutomationElement *windowElement = nullptr;
-
-    hr = automation->ElementFromHandle(
-        hwnd,
-        &windowElement);
-
+    hr = automation->ElementFromHandle(hwnd, &windowElement);
     if (FAILED(hr) || windowElement == nullptr)
     {
         automation->Release();
-
-        if (comInitialized)
+        if (shouldUninit)
             CoUninitialize();
-
         return "";
     }
 
-    // --------------------------------------------------------
-    // Find Edit controls
-    // --------------------------------------------------------
+    // Prepare condition for Edit or ComboBox controls (address bars)
+    VARIANT vtEdit, vtCombo;
+    VariantInit(&vtEdit);
+    VariantInit(&vtCombo);
+    vtEdit.vt = VT_I4;
+    vtEdit.lVal = UIA_EditControlTypeId;
+    vtCombo.vt = VT_I4;
+    vtCombo.lVal = UIA_ComboBoxControlTypeId;
 
-    VARIANT controlType;
-    VariantInit(&controlType);
+    IUIAutomationCondition *editCond = nullptr;
+    IUIAutomationCondition *comboCond = nullptr;
+    automation->CreatePropertyCondition(UIA_ControlTypePropertyId, vtEdit, &editCond);
+    automation->CreatePropertyCondition(UIA_ControlTypePropertyId, vtCombo, &comboCond);
 
-    controlType.vt = VT_I4;
-    controlType.lVal = UIA_EditControlTypeId;
-
-    IUIAutomationCondition *condition = nullptr;
-
-    hr = automation->CreatePropertyCondition(
-        UIA_ControlTypePropertyId,
-        controlType,
-        &condition);
-
-    VariantClear(&controlType);
-
-    if (FAILED(hr) || condition == nullptr)
+    IUIAutomationCondition *orCond = nullptr;
+    if (editCond && comboCond)
     {
-        windowElement->Release();
-        automation->Release();
-
-        if (comInitialized)
-            CoUninitialize();
-
-        return "";
+        automation->CreateOrCondition(editCond, comboCond, &orCond);
     }
-
-    // --------------------------------------------------------
-    // Find first Edit control
-    // --------------------------------------------------------
 
     IUIAutomationElement *addressBar = nullptr;
 
-    hr = windowElement->FindFirst(
-        TreeScope_Descendants,
-        condition,
-        &addressBar);
-
-    condition->Release();
-
-    if (FAILED(hr) || addressBar == nullptr)
+    if (orCond)
     {
-        windowElement->Release();
-        automation->Release();
-
-        if (comInitialized)
-            CoUninitialize();
-
-        return "";
+        windowElement->FindFirst(TreeScope_Descendants, orCond, &addressBar);
+    }
+    else if (editCond)
+    {
+        windowElement->FindFirst(TreeScope_Descendants, editCond, &addressBar);
     }
 
-    // --------------------------------------------------------
-    // Read ValuePattern
-    // --------------------------------------------------------
-
-    IUIAutomationValuePattern *valuePattern = nullptr;
-
-    hr = addressBar->GetCurrentPatternAs(
-        UIA_ValuePatternId,
-        IID_PPV_ARGS(&valuePattern));
+    // Cleanup conditions
+    if (editCond) editCond->Release();
+    if (comboCond) comboCond->Release();
+    if (orCond) orCond->Release();
+    VariantClear(&vtEdit);
+    VariantClear(&vtCombo);
 
     string url = "";
 
-    if (SUCCEEDED(hr) && valuePattern != nullptr)
+    if (addressBar != nullptr)
     {
-        BSTR value = nullptr;
+        IUIAutomationValuePattern *valuePattern = nullptr;
+        hr = addressBar->GetCurrentPatternAs(UIA_ValuePatternId, IID_PPV_ARGS(&valuePattern));
 
-        hr = valuePattern->get_CurrentValue(
-            &value);
-
-        if (SUCCEEDED(hr) && value != nullptr)
+        if (SUCCEEDED(hr) && valuePattern != nullptr)
         {
-            int sizeNeeded =
-                WideCharToMultiByte(
-                    CP_UTF8,
-                    0,
-                    value,
-                    -1,
-                    nullptr,
-                    0,
-                    nullptr,
-                    nullptr);
+            BSTR value = nullptr;
+            hr = valuePattern->get_CurrentValue(&value);
 
-            if (sizeNeeded > 0)
+            if (SUCCEEDED(hr) && value != nullptr)
             {
-                string converted(
-                    sizeNeeded - 1,
-                    '\0');
-
-                WideCharToMultiByte(
-                    CP_UTF8,
-                    0,
-                    value,
-                    -1,
-                    &converted[0],
-                    sizeNeeded,
-                    nullptr,
-                    nullptr);
-
-                url = converted;
+                int sizeNeeded = WideCharToMultiByte(CP_UTF8, 0, value, -1, nullptr, 0, nullptr, nullptr);
+                if (sizeNeeded > 1)
+                {
+                    string converted(sizeNeeded - 1, '\0');
+                    WideCharToMultiByte(CP_UTF8, 0, value, -1, &converted[0], sizeNeeded, nullptr, nullptr);
+                    url = converted;
+                }
+                SysFreeString(value);
             }
-
-            SysFreeString(value);
+            valuePattern->Release();
         }
-
-        valuePattern->Release();
+        addressBar->Release();
     }
 
-    // --------------------------------------------------------
-    // Cleanup
-    // --------------------------------------------------------
-
-    addressBar->Release();
     windowElement->Release();
     automation->Release();
 
-    if (comInitialized)
+    if (shouldUninit)
         CoUninitialize();
 
     return url;
 }
 
 // ============================================================
-// CHECK YOUTUBE
+// URL HELPERS
 // ============================================================
 
 bool isYouTubeUrl(const string &url)
 {
-    string lowerUrl =
-        toLowerCase(url);
-
+    string lowerUrl = toLower(url);
     return (
         lowerUrl.find("youtube.com") != string::npos ||
         lowerUrl.find("youtu.be") != string::npos);
 }
 
-// ============================================================
-// CHECK YOUTUBE SHORTS
-// ============================================================
-
 bool isYouTubeShorts(const string &url)
 {
-    string lowerUrl =
-        toLowerCase(url);
-
+    string lowerUrl = toLower(url);
     return (
         lowerUrl.find("youtube.com/shorts/") != string::npos ||
         lowerUrl.find("youtube.com/shorts") != string::npos);
 }
 
-bool isInstagramUrl(const string &url)
+static bool isInstagramUrl(const string &url)
 {
-    string lowerUrl = toLowerCase(url);
-
-    return (
-        lowerUrl.find("instagram.com") != string::npos);
+    string lowerUrl = toLower(url);
+    return (lowerUrl.find("instagram.com") != string::npos);
 }
 
-bool isSnapchatUrl(const string &url)
+static bool isSnapchatUrl(const string &url)
 {
-    string lowerUrl = toLowerCase(url);
-
-    return (
-        lowerUrl.find("snapchat.com") != string::npos);
+    string lowerUrl = toLower(url);
+    return (lowerUrl.find("snapchat.com") != string::npos);
 }
 
-bool isFacebookUrl(const string &url)
+static bool isFacebookUrl(const string &url)
 {
-    string lowerUrl = toLowerCase(url);
-
+    string lowerUrl = toLower(url);
     return (
         lowerUrl.find("facebook.com") != string::npos ||
         lowerUrl.find("fb.com") != string::npos);
 }
 
-bool isWhatsAppUrl(const string &url)
+static bool isWhatsAppUrl(const string &url)
 {
-    string lowerUrl = toLowerCase(url);
-
+    string lowerUrl = toLower(url);
     return (
         lowerUrl.find("web.whatsapp.com") != string::npos ||
         lowerUrl.find("whatsapp.com") != string::npos);
 }
 
-bool isLinkedInUrl(const string &url)
+static bool isLinkedInUrl(const string &url)
 {
-    string lowerUrl = toLowerCase(url);
-
-    return (
-        lowerUrl.find("linkedin.com") != string::npos);
+    string lowerUrl = toLower(url);
+    return (lowerUrl.find("linkedin.com") != string::npos);
 }
+
 // ============================================================
 // DETECT BROWSER CONTEXT
 // ============================================================
 
-BrowserInfo detectBrowserContext(HWND hwnd)
+BrowserInfo detectBrowserContext(HWND hwnd, const string &appName)
 {
     BrowserInfo info;
-
     if (hwnd == NULL)
         return info;
 
-    info.isBrowser = true;
+    info.isBrowser = isSupportedBrowser(appName);
+    info.browserName = appName;
 
-    // --------------------------------------------------------
-    // GET CURRENT URL
-    // --------------------------------------------------------
+    if (!info.isBrowser)
+        return info;
 
-    info.url = getBrowserUrl(hwnd);
-
-    cout << "[BROWSER URL] "
-         << info.url
-         << endl;
-
-    string url = toLowerCase(info.url);
-
-    // --------------------------------------------------------
-    // NO URL
-    // --------------------------------------------------------
+    info.url = getBrowserUrl(hwnd, appName);
+    string url = toLower(info.url);
 
     if (url.empty())
         return info;
 
-    // ========================================================
-    // YOUTUBE
-    // ========================================================
-
+    // YouTube
     if (isYouTubeUrl(url))
     {
         info.isYouTube = true;
-
-        // ----------------------------------------------------
-        // YOUTUBE SHORTS
-        // ----------------------------------------------------
 
         if (isYouTubeShorts(url))
         {
@@ -363,27 +249,15 @@ BrowserInfo detectBrowserContext(HWND hwnd)
             return info;
         }
 
-        // ----------------------------------------------------
-        // YOUTUBE HISTORY
-        // ----------------------------------------------------
-
-        if (
-            url.find("youtube.com/feed/history") !=
-            string::npos)
+        if (url.find("youtube.com/feed/history") != string::npos)
         {
             info.isYouTubeHistory = true;
             return info;
         }
 
-        // ----------------------------------------------------
-        // YOUTUBE HOME
-        // ----------------------------------------------------
-
-        if (
-            url == "https://www.youtube.com/" ||
+        if (url == "https://www.youtube.com/" ||
             url == "https://youtube.com/" ||
-            url.find("youtube.com/?") !=
-                string::npos)
+            url.find("youtube.com/?") != string::npos)
         {
             info.isYouTubeHome = true;
             return info;
@@ -392,19 +266,12 @@ BrowserInfo detectBrowserContext(HWND hwnd)
         return info;
     }
 
-    // ========================================================
-    // INSTAGRAM
-    // ========================================================
-
+    // Social Media / Web Apps
     if (isInstagramUrl(url))
     {
         info.isInstagram = true;
         return info;
     }
-
-    // ========================================================
-    // SNAPCHAT
-    // ========================================================
 
     if (isSnapchatUrl(url))
     {
@@ -412,29 +279,17 @@ BrowserInfo detectBrowserContext(HWND hwnd)
         return info;
     }
 
-    // ========================================================
-    // FACEBOOK
-    // ========================================================
-
     if (isFacebookUrl(url))
     {
         info.isFacebook = true;
         return info;
     }
 
-    // ========================================================
-    // WHATSAPP
-    // ========================================================
-
     if (isWhatsAppUrl(url))
     {
         info.isWhatsApp = true;
         return info;
     }
-
-    // ========================================================
-    // LINKEDIN
-    // ========================================================
 
     if (isLinkedInUrl(url))
     {

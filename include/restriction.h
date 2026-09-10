@@ -27,7 +27,7 @@ public:
     void restrictApplication(
         const std::string &application,
         int cooldownSeconds,
-        HWND windowHandle);
+        HWND windowHandle = NULL);
 
     // Check whether an application is currently restricted.
     bool isRestricted(
