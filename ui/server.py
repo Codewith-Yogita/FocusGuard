@@ -125,7 +125,7 @@ AI_BRIDGE_GOAL_PATH = os.path.join(PROJECT_DIR, "tools", "active_goal.json")
 goal_paused_until = 0.0
 is_session_locked = False
 active_policy_name = "Balanced"
-current_user = "Mehakpreet"
+current_user = "anshu"
 is_focus_active = False
 
 DEFAULT_POLICIES = [
@@ -197,10 +197,10 @@ def load_user_profiles():
             pass
 
     default_data = {
-        "currentUser": "Mehakpreet",
+        "currentUser": "anshu",
         "focusSessionActive": False,
         "users": {
-            "Mehakpreet": initial_policies
+            "anshu": initial_policies
         }
     }
     save_user_profiles(default_data)
@@ -229,7 +229,7 @@ def get_current_user():
 def set_current_user(user_name):
     """Switches active user profile and syncs policies to policies.json for C++ daemon."""
     global current_user
-    user_name = user_name.strip() if user_name else "Mehakpreet"
+    user_name = user_name.strip() if user_name else "anshu"
     current_user = user_name
     profiles = load_user_profiles()
     profiles["currentUser"] = user_name

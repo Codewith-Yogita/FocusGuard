@@ -152,10 +152,9 @@ let restrictedCooldowns = {};
 let isUserPresent = true;
 let presenceCountdown = 60;
 let isSessionLocked = false;
-let isFaceEnrolled = false;
-let currentUser = "Mehakpreet";
+let currentUser = localStorage.getItem("focusguard_current_user") || "anshu";
 let isFocusActive = false;
-let allUsers = ["Mehakpreet"];
+let allUsers = JSON.parse(localStorage.getItem("focusguard_all_users") || '["anshu"]');
 let enrolledFaceUsers = [];
 try {
   const savedFaces = localStorage.getItem("focusguard_enrolled_faces");
@@ -1895,11 +1894,11 @@ function updateUserUI() {
   }
 }
 
-let enrollTargetUser = "Mehakpreet";
+let enrollTargetUser = currentUser || "anshu";
 let enrollWebcamStream = null;
 
 function triggerEnrollFace(userName) {
-  enrollTargetUser = (userName || currentUser || "Mehakpreet").trim();
+  enrollTargetUser = (userName || currentUser || "anshu").trim();
   const modal = document.getElementById("faceEnrollModal");
   if (!modal) return;
 
@@ -2133,17 +2132,17 @@ async function openSwitchUserModal() {
   try {
     const res = await apiFetch("/api/users", { method: "GET" });
     if (res.ok && res.data) {
-      allUsers = res.data.users || ["Mehakpreet"];
+      allUsers = res.data.users || [currentUser];
       enrolledFaceUsers = res.data.enrolledFaceUsers || [];
       currentUser = res.data.currentUser || currentUser;
     } else {
-      const savedUsers = JSON.parse(localStorage.getItem("focusguard_all_users") || '["Mehakpreet", "Yogita"]');
+      const savedUsers = JSON.parse(localStorage.getItem("focusguard_all_users") || JSON.stringify([currentUser]));
       allUsers = Array.from(new Set([...allUsers, ...savedUsers]));
       enrolledFaceUsers = JSON.parse(localStorage.getItem("focusguard_enrolled_faces") || '[]');
       currentUser = localStorage.getItem("focusguard_current_user") || currentUser;
     }
   } catch (e) {
-    const savedUsers = JSON.parse(localStorage.getItem("focusguard_all_users") || '["Mehakpreet", "Yogita"]');
+    const savedUsers = JSON.parse(localStorage.getItem("focusguard_all_users") || JSON.stringify([currentUser]));
     allUsers = Array.from(new Set([...allUsers, ...savedUsers]));
     enrolledFaceUsers = JSON.parse(localStorage.getItem("focusguard_enrolled_faces") || '[]');
     currentUser = localStorage.getItem("focusguard_current_user") || currentUser;
@@ -2364,7 +2363,7 @@ async function startFaceEnrollment() {
   const overlayFrame = document.getElementById("scannerOverlayFrame");
 
   const userNameInput = document.getElementById("enrollUserNameInput");
-  const enrollUser = (userNameInput ? userNameInput.value.trim() : "") || currentUser || "Mehakpreet";
+  const enrollUser = (userNameInput ? userNameInput.value.trim() : "") || currentUser || "anshu";
 
   if (!activeWebcamStream) {
     await toggleEnrollWebcam();
