@@ -1,5 +1,5 @@
 {
-  "currentUser": "Yogita",
+  "currentUser": "anshu",
   "focusSessionActive": true,
   "users": {
     "Mehakpreet": [
@@ -45,6 +45,48 @@
       }
     ],
     "Yogita": [
+      {
+        "application": "Instagram",
+        "mode": "BLOCK",
+        "maxDurationSeconds": 60,
+        "cooldownSeconds": 3600,
+        "icon": "camera",
+        "description": "Completely restricted application. Triggers immediate lockout countdown upon detection."
+      },
+      {
+        "application": "Snapchat",
+        "mode": "BLOCK",
+        "maxDurationSeconds": 60,
+        "cooldownSeconds": 3600,
+        "icon": "message-circle",
+        "description": "Completely restricted application. Instant distraction classification."
+      },
+      {
+        "application": "YouTube",
+        "mode": "CONTENT_AWARE",
+        "maxDurationSeconds": 60,
+        "cooldownSeconds": 3600,
+        "icon": "play",
+        "description": "Content-Aware: YouTube Shorts are strictly restricted, while DSA, C++, and lectures remain allowed."
+      },
+      {
+        "application": "VS Code",
+        "mode": "ALLOW",
+        "maxDurationSeconds": 0,
+        "cooldownSeconds": 0,
+        "icon": "code-2",
+        "description": "Whitelisted primary coding environment. Always classified as productive."
+      },
+      {
+        "application": "Reddit",
+        "mode": "BLOCK",
+        "maxDurationSeconds": 60,
+        "cooldownSeconds": 1800,
+        "icon": "globe",
+        "description": "Social media forum feed. Restricted during focus sessions."
+      }
+    ],
+    "anshu": [
       {
         "application": "Instagram",
         "mode": "BLOCK",
