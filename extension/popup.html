@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>FocusGuard</title>
+  <style>
+    body {
+      width: 280px;
+      margin: 0;
+      padding: 16px;
+      background: #0f172a;
+      color: #f8fafc;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    }
+    .header {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 14px;
+      border-bottom: 1px solid #1e293b;
+      padding-bottom: 10px;
+    }
+    .title {
+      font-size: 15px;
+      font-weight: 700;
+      color: #38bdf8;
+    }
+    .status-card {
+      background: #1e293b;
+      border: 1px solid #334155;
+      border-radius: 12px;
+      padding: 12px;
+      font-size: 12px;
+      margin-bottom: 14px;
+    }
+    .btn {
+      width: 100%;
+      padding: 10px;
+      border-radius: 10px;
+      border: none;
+      font-size: 13px;
+      font-weight: 700;
+      cursor: pointer;
+      margin-bottom: 8px;
+      transition: all 0.2s;
+    }
+    .btn-pause {
+      background: rgba(245, 158, 11, 0.2);
+      border: 1px solid rgba(245, 158, 11, 0.5);
+      color: #fbbf24;
+    }
+    .btn-pause:hover {
+      background: rgba(245, 158, 11, 0.3);
+    }
+    .btn-dashboard {
+      background: #0284c7;
+      color: #ffffff;
+    }
+    .btn-dashboard:hover {
+      background: #0369a1;
+    }
+    .btn-clear {
+      background: rgba(239, 68, 68, 0.18);
+      border: 1px solid rgba(239, 68, 68, 0.45);
+      color: #fca5a5;
+    }
+    .btn-clear:hover {
+      background: rgba(239, 68, 68, 0.35);
+      color: #ffffff;
+    }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <span style="font-size: 20px;">🛡️</span>
+    <span class="title">FocusGuard Shield</span>
+  </div>
+
+  <div class="status-card">
+    <div style="color: #94a3b8; margin-bottom: 4px;">DOM Tab Blocker:</div>
+    <div style="font-weight: 700; color: #4ade80;">Active (4s / 7s / 10s HUD)</div>
+    <div id="goal-status" style="margin-top: 6px; font-size: 11px; color: #cbd5e1;">Syncing with FocusGuard daemon...</div>
+  </div>
+
+  <button id="clear-all-actions-btn" class="btn btn-clear">🧹 Clear Every Action (Reset All)</button>
+  <button id="pause-goal-btn" class="btn btn-pause">⏸️ Pause Goal (5m Break)</button>
+  <button id="open-dashboard-btn" class="btn btn-dashboard">Open FocusGuard Dashboard</button>
+
+  <script src="popup.js"></script>
+</body>
+</html>

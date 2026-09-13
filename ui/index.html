@@ -1,0 +1,679 @@
+<!doctype html>
+<html lang="en" class="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="theme-color" content="#191919">
+  <meta name="description" content="FocusGuard intelligent focus monitoring and biometric security dashboard">
+  <title>FocusGuard — Focus Intelligence</title>
+  <link rel="icon" href="favicon.svg" type="image/svg+xml">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>tailwind.config={darkMode:'class',theme:{extend:{fontFamily:{sans:['DM Sans','sans-serif'],mono:['JetBrains Mono','monospace']}}}}</script>
+  <script src="https://unpkg.com/lucide@latest"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div id="browserHudBanner" class="hud hidden" role="status" aria-live="polite">
+    <div id="hudIconWrapper" class="hud-icon"><i id="hudIcon" data-lucide="info"></i></div>
+    <div class="hud-copy"><strong id="hudTitle">FocusGuard heads-up</strong><span id="hudMessage">You have drifted from your goal. Wrap up shortly.</span></div>
+    <button onclick="pauseGoalFromModal(5)" class="button button-quiet button-small"><i data-lucide="pause"></i>Pause 5m</button>
+    <button onclick="dismissHudBanner()" class="icon-button" aria-label="Dismiss"><i data-lucide="x"></i></button>
+  </div>
+
+  <header class="app-header">
+    <div class="header-inner">
+      <a class="brand" href="#" onclick="switchTab('focus'); return false" aria-label="FocusGuard home">
+        <span class="brand-mark"><i data-lucide="shield-check"></i></span>
+        <span><b>FocusGuard</b><small id="systemStateText">Guard active</small></span>
+      </a>
+      <nav class="main-nav" aria-label="Primary navigation">
+        <button id="tab-focus" class="tab-btn active" onclick="switchTab('focus')"><i data-lucide="target"></i><span>Focus</span></button>
+        <button id="tab-analytics" class="tab-btn" onclick="switchTab('analytics')"><i data-lucide="chart-no-axes-combined"></i><span>Analytics</span></button>
+      </nav>
+      <div class="header-actions">
+        <div id="headerUserBadge" class="presence-pill cursor-pointer" onclick="openSwitchUserModal()" title="Switch user profile">
+          <i data-lucide="user"></i>
+          <span id="headerUserName">Mehakpreet</span>
+        </div>
+        <button id="headerEnrollFaceBtn" class="button button-warning button-small hidden" onclick="triggerEnrollFace(currentUser)" title="Enroll face template for biometric authentication">
+          <i data-lucide="scan-face"></i><span>Enroll Face</span>
+        </button>
+        <div id="headerPresenceBadge" class="presence-pill"><span id="headerStatusDot" class="status-dot"></span><span id="headerPulseRing" class="sr-only"></span><span id="headerPresenceText">Present</span></div>
+        <button class="icon-button" id="themeToggleBtn" onclick="toggleTheme()" title="Toggle theme"><i id="themeIcon" data-lucide="sun"></i></button>
+        <button class="button button-secondary button-small" onclick="logoutCurrentUser()" title="Log out of current profile"><i data-lucide="log-out"></i><span>Logout</span></button>
+      </div>
+    </div>
+  </header>
+
+  <main class="shell">
+    <section id="view-focus" class="tab-content page-stack">
+      <div class="page-heading">
+        <div><p class="eyebrow">Daily Focus</p><h1>Focus Dashboard</h1><p>Set your goal, stay on track, and protect your deep work time.</p></div>
+        <div class="flex items-center gap-2">
+          <button id="startFocusBtn" class="button button-primary" onclick="toggleFocusSession()"><i data-lucide="play" id="startFocusIcon"></i><span id="startFocusBtnText">Start Focus</span></button>
+        </div>
+      </div>
+      <div id="liveAlertBanner" class="alert-banner hidden"></div>
+
+      <!-- Active Goal Session Display (Top Priority when Active) -->
+      <article id="activeGoalCard" class="card active-goal-card hidden">
+        <div class="card-heading">
+          <div>
+            <div class="flex items-center gap-2 mb-1">
+              <span id="activeGoalIntervalBadge" class="interval-pill focus"><i data-lucide="target"></i><span id="activeGoalIntervalText">Focus Interval 1/4</span></span>
+              <span id="activeGoalStatusBadge" class="status-badge status-good">Active</span>
+            </div>
+            <h2 id="activeGoalTitle" class="text-xl font-bold">Study DSA (Trees & Graphs)</h2>
+            <p id="activeGoalDescription" class="text-xs text-neutral-400 mt-0.5">Strict DSA context enforcement active</p>
+          </div>
+          <div class="text-right">
+            <div id="activeIntervalTimer" class="active-timer-huge">25:00</div>
+            <span class="text-xs text-neutral-400">Current interval remaining</span>
+          </div>
+        </div>
+
+        <!-- Visual Timeline & Progress -->
+        <div class="my-3">
+          <div class="flex justify-between text-xs text-neutral-400 mb-1">
+            <span id="activeGoalSessionRemaining">Session remaining: 1h 59m</span>
+            <span id="activeGoalNextUp">Next: 5m break</span>
+          </div>
+          <div id="activeGoalTimeline" class="interval-timeline"></div>
+        </div>
+
+        <!-- Goal-Scoped Context Rules & Controls -->
+        <div class="flex flex-wrap items-center justify-between gap-3 pt-3 border-t border-neutral-800/80">
+          <div class="flex flex-wrap items-center gap-1.5 text-xs">
+            <span class="text-neutral-400 mr-1">Allowed:</span>
+            <div id="activeGoalAllowedTags" class="flex flex-wrap gap-1"></div>
+          </div>
+          <div class="flex items-center gap-2">
+            <button id="skipBreakBtn" class="button button-secondary button-small hidden" onclick="handleSkipGoalBreak()"><i data-lucide="fast-forward"></i>Skip Break</button>
+            <button id="pauseGoalBtn" class="button button-secondary button-small" onclick="handleToggleGoalPause()"><i data-lucide="pause" id="pauseGoalIcon"></i><span id="pauseGoalBtnText">Pause</span></button>
+            <button id="endGoalBtn" class="button button-danger button-small" onclick="handleEndGoalSession()"><i data-lucide="square"></i>End Goal</button>
+          </div>
+        </div>
+      </article>
+
+      <!-- AI Goal Composer Card (Top Priority when Idle) -->
+      <article id="goalComposerCard" class="card goal-composer-card">
+        <div class="card-heading">
+          <div>
+            <span class="label"><i data-lucide="sparkles" class="w-3.5 h-3.5 text-blue-400"></i>AI Focus Planner</span>
+            <h3 class="text-base font-semibold">What would you like to achieve today?</h3>
+          </div>
+          <span class="status-badge text-xs" style="background:rgba(57,127,207,0.12);color:var(--blue);border:1px solid rgba(57,127,207,0.3)"><i data-lucide="cpu" class="w-3 h-3"></i>Groq compound-mini</span>
+        </div>
+        <p class="text-xs text-neutral-400 mt-1">Describe your focus goal in natural language. FocusGuard will design tailored focus intervals and smart protection rules.</p>
+        
+        <div class="goal-input-container">
+          <textarea id="goalInput" class="goal-input-area" rows="2" placeholder="e.g. 'I want to study DSA for 2 hours', 'Write research paper for 90m', or 'Build React component for 45 mins'"></textarea>
+          
+          <div class="flex items-center justify-between flex-wrap gap-2">
+            <div class="prompt-chips">
+              <span class="text-xs text-neutral-500 font-medium mr-1">Try:</span>
+              <button type="button" class="prompt-chip" onclick="applyGoalPrompt('I want to study DSA for 2 hours')"><i data-lucide="code-2" class="w-3 h-3"></i>Study DSA (2h)</button>
+              <button type="button" class="prompt-chip" onclick="applyGoalPrompt('Deep work coding for 90 minutes')"><i data-lucide="terminal" class="w-3 h-3"></i>Deep work (90m)</button>
+              <button type="button" class="prompt-chip" onclick="applyGoalPrompt('Read research papers for 45 mins')"><i data-lucide="book-open" class="w-3 h-3"></i>Research (45m)</button>
+              <button type="button" class="prompt-chip" onclick="applyGoalPrompt('Write essay for 1 hour with strict focus')"><i data-lucide="file-text" class="w-3 h-3"></i>Essay (1h)</button>
+            </div>
+            <button id="buildPlanBtn" class="button button-primary" onclick="handleBuildGoalPlan()">
+              <i data-lucide="sparkles" id="buildPlanIcon"></i>
+              <span id="buildPlanBtnText">Generate Focus Plan</span>
+            </button>
+          </div>
+        </div>
+
+        <!-- Inline Clarification Box -->
+        <div id="goalClarificationBox" class="clarification-box hidden">
+          <div class="flex items-center gap-2 text-sm font-semibold text-amber-400">
+            <i data-lucide="help-circle" class="w-4 h-4"></i>
+            <span id="clarificationQuestionText">Did you mean 12 minutes or 12 hours?</span>
+          </div>
+          <p id="clarificationSubtext" class="text-xs text-neutral-300">Select an option to confirm your session length:</p>
+          <div id="clarificationOptionsContainer" class="clarification-options"></div>
+        </div>
+      </article>
+
+      <!-- Main Dashboard 2-Column Layout -->
+      <div class="monitor-layout">
+        <!-- Left Primary Column -->
+        <div class="primary-column page-stack">
+          <!-- What you're doing now card: Human-friendly, answers "Am I focused?" and "What happens if I get distracted?" -->
+          <article id="currentActivityCard" class="activity-card is-aligned">
+            <div class="activity-header">
+              <div>
+                <div class="flex items-center gap-2 flex-wrap">
+                  <span class="label"><span class="live-dot"></span>What you're doing now</span>
+                </div>
+                <h2 class="activity-app-title flex items-baseline gap-2 flex-wrap">
+                  <span id="liveAppLogicalName">VS Code</span>
+                  <span id="modelSimulationBracket" class="text-xs font-normal text-amber-500 dark:text-amber-400 font-sans tracking-normal">(model not detected, it's a simulation running)</span>
+                </h2>
+                <p id="friendlyActivitySubtext" class="activity-app-sub">Active coding & algorithm development</p>
+              </div>
+              <div id="activityAlignmentContainer">
+                <span id="activityAlignmentPill" class="activity-alignment-pill aligned">
+                  <i data-lucide="check-circle-2"></i>
+                  <span id="activityAlignmentText">✓ Supporting your goal</span>
+                </span>
+              </div>
+            </div>
+
+            <!-- Distraction progress (only visible during distraction streaks) -->
+            <div id="distractionProgressBox" class="meter-block hidden mt-3">
+              <div class="meter-label">
+                <span class="text-rose-400 font-semibold flex items-center gap-1.5"><i data-lucide="alert-triangle" class="w-4 h-4"></i>Distraction Detected</span>
+                <b id="distractionStreakTimer">0s / 10s max</b>
+              </div>
+              <div class="progress-track"><div id="escalationProgressBar" class="progress-bar-fill bg-rose-500" style="width:0%"></div></div>
+            </div>
+
+            <!-- What happens if I get distracted? -->
+            <div class="activity-consequence-box">
+              <div>
+                <span class="text-neutral-400 block text-[11px] uppercase font-semibold">Focus Protection Rules</span>
+                <strong id="consequencePolicyText">Distractions trigger a reminder after 5s, intervention popup at 10s, and a 60m lockout.</strong>
+              </div>
+              <span id="consequenceStatusNote" class="status-badge status-good text-xs"><i data-lucide="shield-check" class="w-3.5 h-3.5"></i>Protection Armed</span>
+            </div>
+          </article>
+
+          <!-- Quick Session Stats -->
+          <section class="stats-grid" aria-label="Session statistics">
+            <article class="stat-card"><div class="stat-icon"><i data-lucide="timer"></i></div><div><span>Focus time today</span><b id="sessionProductiveTime">45m 12s</b><small>Current session</small></div></article>
+            <article class="stat-card"><div class="stat-icon"><i data-lucide="sparkles"></i></div><div><span>Focus score</span><b>92<span>/100</span></b><small>High focus quality</small></div></article>
+            <article class="stat-card"><div class="stat-icon"><i data-lucide="shield-check"></i></div><div><span>Protection preset</span><b id="activePresetBadgeName">Balanced</b><small id="activePolicySummarySmall">5 allowed · 4 blocked</small></div></article>
+          </section>
+
+          <!-- Collapsible Focus Protection / Policy Settings -->
+          <article id="focusProtectionCard" class="protection-card">
+            <div class="protection-summary-header" onclick="toggleFocusProtectionCard()" title="Click to customize focus protection rules">
+              <div class="protection-summary-left">
+                <div class="protection-icon-badge"><i data-lucide="shield-check"></i></div>
+                <div>
+                  <h3 class="protection-meta-title">Focus Protection & Policy Settings</h3>
+                  <p id="protectionSummaryText" class="protection-meta-subtitle">Balanced protection · 5s Warn / 10s Block · 5 Allowed · 4 Blocked</p>
+                </div>
+              </div>
+              <div class="protection-summary-right">
+                <button type="button" class="button button-quiet button-small" onclick="event.stopPropagation(); toggleFocusProtectionCard();">
+                  <span id="protectionToggleBtnText">Customize</span>
+                  <i id="protectionChevron" data-lucide="chevron-down" class="chevron-rotate"></i>
+                </button>
+              </div>
+            </div>
+
+            <div id="protectionBody" class="protection-body space-y-4 pt-4">
+              <!-- Escalation Timing -->
+              <div>
+                <span class="label">Escalation Timing</span>
+                <div class="grid grid-cols-3 gap-3 mt-1.5">
+                  <div class="p-2.5 rounded-lg bg-neutral-900 border border-neutral-800">
+                    <label class="text-[11px] text-neutral-400 block mb-1">Warning After</label>
+                    <div class="flex items-center gap-1.5">
+                      <input id="protectWarnInput" type="number" min="2" max="60" value="5" class="w-16 bg-neutral-800 border border-neutral-700 rounded px-2 py-1 text-sm font-semibold font-mono text-neutral-100">
+                      <span class="text-xs text-neutral-400">sec</span>
+                    </div>
+                  </div>
+                  <div class="p-2.5 rounded-lg bg-neutral-900 border border-neutral-800">
+                    <label class="text-[11px] text-neutral-400 block mb-1">Intervene / Block</label>
+                    <div class="flex items-center gap-1.5">
+                      <input id="protectBlockInput" type="number" min="5" max="180" value="10" class="w-16 bg-neutral-800 border border-neutral-700 rounded px-2 py-1 text-sm font-semibold font-mono text-neutral-100">
+                      <span class="text-xs text-neutral-400">sec</span>
+                    </div>
+                  </div>
+                  <div class="p-2.5 rounded-lg bg-neutral-900 border border-neutral-800">
+                    <label class="text-[11px] text-neutral-400 block mb-1">Lockout Cooldown</label>
+                    <div class="flex items-center gap-1.5">
+                      <input id="protectCooldownInput" type="number" min="1" max="180" value="60" class="w-16 bg-neutral-800 border border-neutral-700 rounded px-2 py-1 text-sm font-semibold font-mono text-neutral-100">
+                      <span class="text-xs text-neutral-400">min</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Allowed Applications & Sites -->
+              <div>
+                <div class="flex items-center justify-between">
+                  <span class="label">Allowed Applications & Websites</span>
+                  <span class="text-[10px] text-neutral-500">Always permitted</span>
+                </div>
+                <div id="allowedChipsContainer" class="chips-container"></div>
+                <div class="chip-add-input">
+                  <input id="addAllowedInput" type="text" placeholder="Add app or domain (e.g. GitHub, LeetCode, Obsidian)" onkeydown="if(event.key==='Enter'){event.preventDefault();addAllowedTag();}">
+                  <button type="button" class="button button-small button-secondary" onclick="addAllowedTag()"><i data-lucide="plus"></i>Add</button>
+                </div>
+              </div>
+
+              <!-- Blocked Applications & Sites -->
+              <div>
+                <div class="flex items-center justify-between">
+                  <span class="label">Restricted Distractions</span>
+                  <span class="text-[10px] text-neutral-500">Triggers distraction timer</span>
+                </div>
+                <div id="blockedChipsContainer" class="chips-container"></div>
+                <div class="chip-add-input">
+                  <input id="addBlockedInput" type="text" placeholder="Add distraction (e.g. Instagram, Reddit, Twitter, Netflix)" onkeydown="if(event.key==='Enter'){event.preventDefault();addBlockedTag();}">
+                  <button type="button" class="button button-small button-secondary" onclick="addBlockedTag()"><i data-lucide="plus"></i>Add</button>
+                </div>
+              </div>
+
+              <!-- Content Toggles -->
+              <div class="grid grid-cols-2 gap-3 pt-2 border-t border-neutral-800">
+                <label class="toggle-row p-0 m-0 cursor-pointer">
+                  <span><b>Educational YouTube</b><small>Allow DSA tutorials & lectures</small></span>
+                  <input id="toggleEduYouTube" type="checkbox" checked onchange="handleToggleEduYouTube()"><i></i>
+                </label>
+                <label class="toggle-row p-0 m-0 cursor-pointer">
+                  <span><b>Study Music</b><small>Allow Spotify & background lofi</small></span>
+                  <input id="toggleStudyMusic" type="checkbox" checked onchange="handleToggleStudyMusic()"><i></i>
+                </label>
+              </div>
+
+              <!-- Presets & Save Action -->
+              <div class="flex items-center justify-between flex-wrap gap-2 pt-3 border-t border-neutral-800">
+                <div class="flex items-center gap-1.5">
+                  <span class="text-xs text-neutral-400 mr-1">Presets:</span>
+                  <button type="button" class="button button-quiet button-small" onclick="applyProtectionPreset('strict')">Strict Exam</button>
+                  <button type="button" class="button button-quiet button-small" onclick="applyProtectionPreset('balanced')">Balanced Work</button>
+                  <button type="button" class="button button-quiet button-small" onclick="applyProtectionPreset('relaxed')">Relaxed</button>
+                </div>
+                <button id="saveProtectionBtn" type="button" class="button button-primary" onclick="saveProtectionSettings()">
+                  <i data-lucide="save"></i>Save Protection Settings
+                </button>
+              </div>
+            </div>
+          </article>
+        </div>
+
+        <!-- Right Side Column: Activity Simulator & Session Controls -->
+        <aside class="side-column page-stack">
+          <!-- Activity simulator card (Interactive Demo Switcher) -->
+          <article class="card">
+            <div class="card-heading">
+              <div>
+                <span class="label flex items-center gap-1.5 text-cyan-500">
+                  <i data-lucide="play-circle" class="w-3.5 h-3.5"></i>Activity Simulator
+                </span>
+                <h3 class="text-sm font-bold">Interactive Demo Switcher</h3>
+              </div>
+              <div class="flex items-center gap-2">
+                <span id="demoModeBadge" class="demo-indicator hidden"><i data-lucide="flask-conical" class="w-3 h-3"></i>Simulation Active</span>
+                <button id="returnLiveBtn" class="button button-quiet button-small hidden text-[11px] py-1 px-2 h-7" onclick="returnToLiveMode()"><i data-lucide="radio" class="w-3 h-3"></i>Return to Live</button>
+                <span id="simModeNote" class="text-[10px] font-mono px-2 py-0.5 rounded bg-neutral-800 text-neutral-400 border border-neutral-700">Simulation</span>
+              </div>
+            </div>
+            <p class="text-xs text-neutral-400 mt-1 mb-3">Test how FocusGuard classifies different contexts, raises warnings, and locks out distractions.</p>
+
+            <div class="sim-grid-2col">
+              <button id="sim-btn-vscode" onclick="simulateTarget('vscode')" class="sim-target-btn hover-emerald group">
+                <div class="flex items-center justify-between">
+                  <span class="text-xs font-bold text-neutral-100 group-hover:text-emerald-400 flex items-center gap-1.5">
+                    <i data-lucide="code-2" class="w-3.5 h-3.5 text-emerald-400"></i>VS Code
+                  </span>
+                  <span class="w-2.5 h-2.5 rounded-full bg-emerald-500 shadow-sm shadow-emerald-500/50"></span>
+                </div>
+                <span class="text-[10px] text-neutral-400 truncate">main.cpp — Coding</span>
+              </button>
+
+              <button id="sim-btn-yt_dsa" onclick="simulateTarget('yt_dsa')" class="sim-target-btn hover-emerald group">
+                <div class="flex items-center justify-between">
+                  <span class="text-xs font-bold text-neutral-100 group-hover:text-emerald-400 flex items-center gap-1.5">
+                    <i data-lucide="graduation-cap" class="w-3.5 h-3.5 text-emerald-400"></i>YouTube (DSA)
+                  </span>
+                  <span class="w-2.5 h-2.5 rounded-full bg-emerald-500 shadow-sm shadow-emerald-500/50"></span>
+                </div>
+                <span class="text-[10px] text-neutral-400 truncate">C++ Graph Theory Lecture</span>
+              </button>
+
+              <button id="sim-btn-yt_shorts" onclick="simulateTarget('yt_shorts')" class="sim-target-btn hover-rose group">
+                <div class="flex items-center justify-between">
+                  <span class="text-xs font-bold text-neutral-100 group-hover:text-rose-400 flex items-center gap-1.5">
+                    <i data-lucide="smartphone" class="w-3.5 h-3.5 text-rose-400"></i>YouTube Shorts
+                  </span>
+                  <span class="w-2.5 h-2.5 rounded-full bg-rose-500 shadow-sm shadow-rose-500/50"></span>
+                </div>
+                <span class="text-[10px] text-neutral-400 truncate">shorts/viral-clips · Distraction</span>
+              </button>
+
+              <button id="sim-btn-instagram" onclick="simulateTarget('instagram')" class="sim-target-btn hover-rose group">
+                <div class="flex items-center justify-between">
+                  <span class="text-xs font-bold text-neutral-100 group-hover:text-rose-400 flex items-center gap-1.5">
+                    <i data-lucide="instagram" class="w-3.5 h-3.5 text-rose-400"></i>Instagram
+                  </span>
+                  <span class="w-2.5 h-2.5 rounded-full bg-rose-500 shadow-sm shadow-rose-500/50"></span>
+                </div>
+                <span class="text-[10px] text-neutral-400 truncate">Instagram Reels & Feed</span>
+              </button>
+
+              <button id="sim-btn-snapchat" onclick="simulateTarget('snapchat')" class="sim-target-btn hover-rose group">
+                <div class="flex items-center justify-between">
+                  <span class="text-xs font-bold text-neutral-100 group-hover:text-rose-400 flex items-center gap-1.5">
+                    <i data-lucide="message-circle" class="w-3.5 h-3.5 text-rose-400"></i>Snapchat
+                  </span>
+                  <span class="w-2.5 h-2.5 rounded-full bg-rose-500 shadow-sm shadow-rose-500/50"></span>
+                </div>
+                <span class="text-[10px] text-neutral-400 truncate">Stories & Chat · Blocked</span>
+              </button>
+
+              <button id="sim-btn-music" onclick="simulateTarget('music')" class="sim-target-btn hover-cyan group">
+                <div class="flex items-center justify-between">
+                  <span class="text-xs font-bold text-neutral-100 group-hover:text-cyan-400 flex items-center gap-1.5">
+                    <i data-lucide="music-2" class="w-3.5 h-3.5 text-cyan-400"></i>Lofi Music
+                  </span>
+                  <span class="w-2.5 h-2.5 rounded-full bg-cyan-500 shadow-sm shadow-cyan-500/50"></span>
+                </div>
+                <span class="text-[10px] text-neutral-400 truncate">Study Beats Radio · Neutral</span>
+              </button>
+            </div>
+          </article>
+
+          <!-- Face Presence Detection Card -->
+          <article class="card compact-card">
+            <div class="card-heading"><div><span class="label">Presence</span><h3>Face detection</h3></div><span class="status-dot"></span></div>
+            <div class="presence-state"><b id="presenceStateBadge">Present (Face Visible)</b><span id="presenceCountdownText">Auto-lock armed · 60s</span></div>
+            <div class="progress-track slim"><div id="presenceProgressBar" style="width:100%"></div></div>
+            <label class="toggle-row"><span><b>Auto-lock</b><small>Lock after 60 seconds away</small></span><input id="presenceAutoLockToggle" type="checkbox" checked><i></i></label>
+            <button id="simPresenceBtn" class="button button-secondary full" onclick="togglePresenceSimulation()"><i data-lucide="user-round"></i><span id="simPresenceBtnText">Simulate user away</span></button>
+          </article>
+
+          <!-- Cooldowns / Restricted apps Card -->
+          <article class="card compact-card">
+            <div class="card-heading"><div><span class="label">Cooldowns</span><h3>Restricted apps</h3></div><span id="cooldownCountBadge" class="count-badge">0 locked</span></div>
+            <div id="cooldownListContainer" class="cooldown-list"><div class="empty-state"><i data-lucide="shield-check"></i><span>No applications restricted</span></div></div>
+          </article>
+        </aside>
+      </div>
+
+      <!-- Developer Diagnostics Drawer (Hidden by default, opened via Ctrl+Shift+D or ?debug=1) -->
+      <div id="developerContainer" class="developer-drawer hidden space-y-4">
+        <div class="developer-badge-banner">
+          <span><i data-lucide="terminal" class="inline w-4 h-4 mr-1.5"></i><b>Developer Diagnostics Mode</b> — Vision AI telemetry, Face ID camera frames, and context simulator.</span>
+          <button class="button button-quiet button-small" onclick="toggleDeveloperMode(false)"><i data-lucide="x"></i>Hide Diagnostics</button>
+        </div>
+
+        <!-- Technical Telemetry Data -->
+        <div class="grid grid-cols-2 gap-4">
+          <article class="card compact-card">
+            <div class="card-heading"><div><span class="label">Vision AI & OCR Inspector</span><h3>Active Window Analysis</h3></div><span class="model-chip"><span class="status-dot"></span>Qwen 2.5-VL</span></div>
+            <div class="app-meta my-2">
+              <div><span>Window</span><strong id="liveWindowTitle">main.cpp - FocusGuard</strong></div>
+              <div><span>Process</span><strong id="liveProcessName">code.exe</strong></div>
+              <div><span>Context</span><strong id="liveBrowserUrl">N/A</strong></div>
+            </div>
+            <div class="reason-box my-2"><span>Why this classification</span><p id="aiReasonText">Active IDE editor with C++ code logic.</p></div>
+            <div><span class="label">OCR tokens</span><div id="ocrTokensContainer" class="token-cloud"></div></div>
+          </article>
+
+          <article class="card compact-card">
+            <div class="card-heading"><div><span class="label">Biometrics & Security</span><h3>Face ID Inspector</h3></div><span id="faceEnrolledBadge" class="status-badge status-good">Template Ready</span></div>
+            <div class="action-row my-3">
+              <button class="button button-primary button-small" onclick="identifyFaceAcrossUsers()"><i data-lucide="scan"></i>Identify Face</button>
+            </div>
+            <div class="mt-3">
+              <span class="label">Enrolled Biometric Profiles</span>
+              <div id="enrolledUsersList" class="flex flex-col gap-1 mt-1"></div>
+            </div>
+          </article>
+        </div>
+
+        <article class="card compact-card">
+          <div class="card-heading"><div><span class="label">Backend Payload</span><h3>Raw System Telemetry</h3></div><span class="mono-note">JSON</span></div>
+          <pre id="rawAiJson" class="code-panel">{}</pre>
+        </article>
+
+        <!-- Preserved Raw Policy Grid -->
+        <article class="card">
+          <div class="card-heading"><div><span class="label">Raw Engine Rules</span><h3>Policy Engine List</h3></div><button class="button button-primary button-small" onclick="openAddPolicyModal()"><i data-lucide="plus"></i>Add Raw Rule</button></div>
+          <div id="policiesGrid" class="policy-grid mt-3"></div>
+        </article>
+      </div>
+
+      <!-- Compatibility fallback container for old selectors -->
+      <div id="view-monitor" class="hidden"></div>
+      <div id="view-policies" class="hidden"></div>
+      <div id="view-faceauth" class="hidden"></div>
+      <div id="view-vision" class="hidden"></div>
+    </section>
+
+    <section id="view-analytics" class="tab-content page-stack hidden">
+      <div class="page-heading"><div><p class="eyebrow">Analytics</p><h1>Session performance</h1><p>Understand focus quality without drowning in metrics.</p></div><button id="exportReportBtn" class="button button-secondary" onclick="exportAnalyticsReport()"><i data-lucide="download"></i>Export report</button></div>
+      <section class="stats-grid analytics-stats"><article class="stat-card"><div><span>Focus score</span><b>92</b><small>+6 from last session</small></div></article><article class="stat-card"><div><span>Deep work</span><b>45m</b><small>79% of tracked time</small></div></article><article class="stat-card"><div><span>Distraction</span><b id="sessionDistractionTime">2m 10s</b><small>Below weekly average</small></div></article><article class="stat-card"><div><span>Interventions</span><b id="sessionInterventionsCount">1</b><small>Resolved successfully</small></div></article></section>
+      <div class="chart-grid"><article class="card chart-card"><div class="card-heading"><div><span class="label">Time distribution</span><h3>Session balance</h3></div></div><div class="chart-wrap"><canvas id="timePieChart"></canvas></div></article><article class="card chart-card wide"><div class="card-heading"><div><span class="label">Application activity</span><h3>Time by context</h3></div></div><div class="chart-wrap"><canvas id="appBarChart"></canvas></div></article></div>
+      <article class="card insight-card"><div class="insight-icon"><i data-lucide="sparkles"></i></div><div><span class="label">Session insight</span><h3>Your strongest focus block started after the first intervention.</h3><p>You maintained productive activity for 31 uninterrupted minutes. Keeping YouTube in content-aware mode appears to support your learning workflow.</p></div></article>
+
+      <!-- Completed Focus Goals History -->
+      <article class="card">
+        <div class="card-heading">
+          <div><span class="label">Completed Goals</span><h3>Recent Focus Sessions</h3></div>
+          <span class="status-badge status-good"><i data-lucide="check-check"></i>3 Goals Completed Today</span>
+        </div>
+        <div class="space-y-2.5 mt-3">
+          <div class="flex items-center justify-between p-3 rounded-xl bg-neutral-900 border border-neutral-800">
+            <div class="flex items-center gap-3">
+              <div class="w-8 h-8 rounded-lg bg-emerald-500/10 text-emerald-400 flex items-center justify-center font-bold text-xs"><i data-lucide="code-2" class="w-4 h-4"></i></div>
+              <div><strong class="text-sm text-neutral-100 block">Study DSA (Trees & Graphs)</strong><span class="text-xs text-neutral-400">4 focus blocks · 2h total · 95% focus score</span></div>
+            </div>
+            <span class="status-badge status-good text-xs">Completed</span>
+          </div>
+          <div class="flex items-center justify-between p-3 rounded-xl bg-neutral-900 border border-neutral-800">
+            <div class="flex items-center gap-3">
+              <div class="w-8 h-8 rounded-lg bg-blue-500/10 text-blue-400 flex items-center justify-center font-bold text-xs"><i data-lucide="file-text" class="w-4 h-4"></i></div>
+              <div><strong class="text-sm text-neutral-100 block">Write Research Paper</strong><span class="text-xs text-neutral-400">2 focus blocks · 45m total · 91% focus score</span></div>
+            </div>
+            <span class="status-badge status-good text-xs">Completed</span>
+          </div>
+          <div class="flex items-center justify-between p-3 rounded-xl bg-neutral-900 border border-neutral-800">
+            <div class="flex items-center gap-3">
+              <div class="w-8 h-8 rounded-lg bg-purple-500/10 text-purple-400 flex items-center justify-center font-bold text-xs"><i data-lucide="terminal" class="w-4 h-4"></i></div>
+              <div><strong class="text-sm text-neutral-100 block">Deep Work C++ Policy Engine</strong><span class="text-xs text-neutral-400">3 focus blocks · 90m total · 94% focus score</span></div>
+            </div>
+            <span class="status-badge status-good text-xs">Completed</span>
+          </div>
+        </div>
+      </article>
+    </section>
+
+    <!-- App Footer with discreet developer toggle -->
+    <footer class="mt-12 py-6 border-t border-neutral-800/80 text-center text-xs text-neutral-500 flex items-center justify-between flex-wrap gap-3">
+      <span>FocusGuard &copy; 2026 — Private, Local Focus Intelligence</span>
+      <button id="devToggleBtn" class="text-neutral-500 hover:text-neutral-300 text-xs text-button" onclick="toggleDeveloperMode()"><i data-lucide="terminal" class="inline w-3.5 h-3.5 mr-1"></i><span id="devToggleText">Developer Mode (Ctrl+Shift+D)</span></button>
+    </footer>
+  </main>
+
+  <div id="lockScreenModal" class="modal-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="lockScreenStatusText">
+    <div class="lock-card"><div class="lock-brand"><span class="brand-mark"><i data-lucide="shield-check"></i></span><b>FocusGuard</b></div><div class="lock-camera"><video id="lockWebcamVideo" class="hidden" autoplay muted playsinline></video><div id="lockStaticIcon"><i data-lucide="scan-face"></i></div><div id="lockLaserBar" class="scan-line hidden"></div><span id="lockPulseRing"></span></div><h2>Session locked</h2><p id="lockScreenStatusText">Align face within camera view to unlock...</p><button id="faceUnlockBtn" class="button button-primary full" onclick="attemptFaceUnlock()"><i data-lucide="scan-face"></i>Unlock with Face ID</button><button class="text-button" onclick="togglePinUnlockView()">Use recovery PIN</button><div id="pinUnlockSection" class="pin-row hidden"><input id="unlockPinInput" type="password" inputmode="numeric" maxlength="8" placeholder="Enter PIN"><button class="button button-secondary" onclick="attemptPinUnlock()">Unlock</button></div><span id="pinErrorMessage" class="form-error hidden">Incorrect PIN</span></div>
+  </div>
+
+  <div id="policyModal" class="modal-overlay hidden" role="dialog" aria-modal="true"><div class="modal-card"><div class="modal-heading"><h2 id="modalTitle"><i data-lucide="plus-circle"></i>Add new policy</h2><button class="icon-button" onclick="closePolicyModal()"><i data-lucide="x"></i></button></div><form id="policyForm" onsubmit="handlePolicySubmit(event)" class="stack-form"><input id="policyEditIndex" type="hidden" value="-1"><label>Application name<input id="policyAppName" type="text" placeholder="e.g. Reddit" required></label><label>Mode<select id="policyMode"><option value="BLOCK">Block</option><option value="CONTENT_AWARE">Content aware</option><option value="ALLOW">Allow</option></select></label><div class="form-grid"><label>Max duration (seconds)<input id="policyMaxDuration" type="number" min="0" value="60" required></label><label>Cooldown (seconds)<input id="policyCooldown" type="number" min="0" value="3600" required></label></div><div class="modal-actions"><button type="button" class="button button-quiet" onclick="closePolicyModal()">Cancel</button><button type="submit" class="button button-primary">Save policy</button></div></form></div></div>
+
+  <div id="interventionModal" class="modal-overlay hidden" role="dialog" aria-modal="true">
+    <div class="modal-card intervention-card" style="max-width: 500px;">
+      <div class="intervention-icon"><i data-lucide="shield-alert"></i></div>
+      <span class="eyebrow">Focus intervention</span>
+      <h2 id="interventionModalMessage">Let's return to your goal</h2>
+      <p><b id="modalDistractingApp">YouTube Shorts</b> has been distracting for <b id="modalDistractingDuration">10 seconds</b>.</p>
+      
+      <!-- Groq AI Explanation Card -->
+      <div id="modalGroqCard" class="p-3 my-3 rounded-xl bg-neutral-800/80 border border-blue-500/30 text-left text-xs">
+        <div class="flex items-center justify-between mb-1.5">
+          <span class="font-bold text-blue-400 flex items-center gap-1.5"><i data-lucide="sparkles" class="w-3.5 h-3.5"></i>Groq AI Analysis</span>
+          <span class="text-[10px] text-neutral-400">compound-mini</span>
+        </div>
+        <p id="modalGroqReasoningText" class="text-neutral-200 italic leading-relaxed">Analyzing focus conflict with Groq...</p>
+      </div>
+
+      <div class="intervention-detail">
+        <span>Action</span>
+        <b id="modalCooldownTriggered">A cooldown will begin if this continues.</b>
+      </div>
+      <button class="button button-secondary full" onclick="pauseGoalFromModal(5)"><i data-lucide="coffee"></i>Pause goal for 5 minutes</button>
+      <div class="pin-row"><input id="modalUnlockPinInput" type="password" inputmode="numeric" placeholder="Recovery PIN"><button class="button button-quiet" onclick="unlockModalWithPin()">Unlock</button></div>
+      <button class="button button-primary full" onclick="dismissIntervention()"><i data-lucide="focus"></i>Return to focus</button>
+    </div>
+  </div>
+
+  <div id="userSwitchModal" class="modal-overlay hidden" role="dialog" aria-modal="true">
+    <div class="modal-card">
+      <div class="modal-heading">
+        <h2><i data-lucide="users"></i>User Profiles</h2>
+        <button class="icon-button" onclick="closeSwitchUserModal()"><i data-lucide="x"></i></button>
+      </div>
+      <p class="text-xs text-neutral-400 mb-3">Select an enrolled profile or create a new user. Each user maintains distinct focus rules and biometric templates.</p>
+      <div id="usersListContainer" class="flex flex-col gap-2 my-2"></div>
+      <div class="flex gap-2 mt-4 pt-3 border-t border-neutral-800">
+        <input id="newProfileNameInput" type="text" class="bg-neutral-800 border border-neutral-700 rounded-lg px-3 py-1.5 text-sm text-neutral-100 flex-1" placeholder="New user name...">
+        <button class="button button-secondary" onclick="handleCreateProfile()"><i data-lucide="user-plus"></i>Add User</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Biometric Face Enrollment Modal -->
+  <div id="faceEnrollModal" class="modal-overlay hidden" role="dialog" aria-modal="true">
+    <div class="modal-card" style="max-width: 440px;">
+      <div class="modal-heading">
+        <h2><i data-lucide="scan-face"></i>Enroll Face ID</h2>
+        <button class="icon-button" onclick="closeFaceEnrollModal()"><i data-lucide="x"></i></button>
+      </div>
+      <p class="text-xs text-neutral-400 mb-3">Register face template for <strong id="enrollTargetUserName" class="text-neutral-100 font-semibold">User</strong>. Face template is processed locally with YuNet & SFace (same as terminal mode).</p>
+      
+      <div class="relative rounded-xl overflow-hidden border border-neutral-700 bg-neutral-900">
+        <video id="faceEnrollVideo" class="w-full h-48 object-cover hidden" autoplay muted playsinline></video>
+        <div id="faceEnrollPlaceholder" class="w-full h-48 flex flex-col items-center justify-center text-neutral-400 gap-2">
+          <div class="w-12 h-12 rounded-full bg-neutral-800 flex items-center justify-center text-neutral-300">
+            <i data-lucide="camera" class="w-6 h-6"></i>
+          </div>
+          <span class="text-xs">Camera standby</span>
+        </div>
+        <div id="faceEnrollLaser" class="scan-line hidden"></div>
+      </div>
+
+      <div id="faceEnrollProgressBar" class="progress-track mt-3 hidden">
+        <div id="faceEnrollProgressFill" class="progress-bar-fill bg-emerald-500" style="width:0%"></div>
+      </div>
+
+      <p id="faceEnrollStatusText" class="text-xs text-neutral-300 my-3">Click below to open webcam and record 15 facial feature frames.</p>
+
+      <div class="flex flex-col gap-2">
+        <button id="btnExecuteEnroll" class="button button-primary full" onclick="executeFaceEnrollment()">
+          <i data-lucide="camera"></i><span>Start Webcam Enrollment</span>
+        </button>
+        <button type="button" class="button button-quiet full" onclick="closeFaceEnrollModal()">Cancel</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- AI Focus Plan Preview & Customization Modal -->
+  <div id="planPreviewModal" class="modal-overlay hidden" role="dialog" aria-modal="true">
+    <div class="modal-card" style="max-width: 680px; width: 95vw;">
+      <div class="modal-heading">
+        <div>
+          <span class="label text-xs"><i data-lucide="sparkles" class="w-3.5 h-3.5 text-blue-400"></i>AI Generated Focus Plan</span>
+          <h2 id="previewModalHeading" class="text-lg font-bold">Review Your Focus Plan</h2>
+        </div>
+        <button class="icon-button" onclick="closePlanPreviewModal()"><i data-lucide="x"></i></button>
+      </div>
+
+      <div class="space-y-4 my-2 text-sm">
+        <!-- Goal Title & Intent -->
+        <div>
+          <label class="text-xs text-neutral-400 font-medium">Session Goal</label>
+          <input id="previewGoalTitleInput" type="text" class="w-full bg-neutral-800 border border-neutral-700 rounded-lg px-3 py-2 text-sm text-neutral-100 mt-1 font-semibold" placeholder="Goal title...">
+        </div>
+
+        <!-- Schedule Configuration Grid -->
+        <div class="grid grid-cols-3 gap-3 p-3 rounded-lg bg-neutral-800/60 border border-neutral-700/60">
+          <div>
+            <label class="text-xs text-neutral-400">Total Session (mins)</label>
+            <input id="previewTotalMinutesInput" type="number" min="10" max="720" class="w-full bg-neutral-900 border border-neutral-700 rounded px-2.5 py-1.5 text-sm font-semibold mt-1" onchange="recalculateDraftSchedule()">
+          </div>
+          <div>
+            <label class="text-xs text-neutral-400">Focus Block (mins)</label>
+            <input id="previewFocusLengthInput" type="number" min="5" max="180" class="w-full bg-neutral-900 border border-neutral-700 rounded px-2.5 py-1.5 text-sm font-semibold mt-1" onchange="recalculateDraftSchedule()">
+          </div>
+          <div>
+            <label class="text-xs text-neutral-400">Break Length (mins)</label>
+            <input id="previewBreakLengthInput" type="number" min="1" max="60" class="w-full bg-neutral-900 border border-neutral-700 rounded px-2.5 py-1.5 text-sm font-semibold mt-1" onchange="recalculateDraftSchedule()">
+          </div>
+        </div>
+
+        <!-- Visual Timeline -->
+        <div>
+          <div class="flex justify-between items-center text-xs text-neutral-400">
+            <span>Interval Breakdown</span>
+            <span id="previewTimelineSummary">4 focus blocks · 3 breaks · 1 review</span>
+          </div>
+          <div id="previewTimelineBar" class="interval-timeline"></div>
+          <div id="previewIntervalList" class="interval-list"></div>
+        </div>
+
+        <!-- Context & Application Rules -->
+        <div class="grid grid-cols-2 gap-3 pt-2 border-t border-neutral-800">
+          <div>
+            <label class="text-xs text-neutral-400">Allowed Applications & Sites</label>
+            <textarea id="previewAllowedRulesInput" rows="2" class="w-full bg-neutral-900 border border-neutral-700 rounded-lg px-2.5 py-1.5 text-xs text-neutral-200 mt-1" placeholder="Comma-separated (e.g. VS Code, LeetCode, GitHub)"></textarea>
+            <span class="text-[10px] text-neutral-500">Permitted without triggering distraction timer</span>
+          </div>
+          <div>
+            <label class="text-xs text-neutral-400">Explicit Distractions to Block</label>
+            <textarea id="previewBlockedRulesInput" rows="2" class="w-full bg-neutral-900 border border-neutral-700 rounded-lg px-2.5 py-1.5 text-xs text-neutral-200 mt-1" placeholder="Comma-separated (e.g. YouTube, Reddit, Twitter, Steam)"></textarea>
+            <span class="text-[10px] text-neutral-500">Distractions trigger warning & block</span>
+          </div>
+        </div>
+
+        <!-- Strictness / Escalation Times -->
+        <div class="flex items-center justify-between gap-4 p-2.5 rounded-lg bg-neutral-800/40 border border-neutral-700/50 text-xs">
+          <div class="flex items-center gap-2">
+            <span class="text-neutral-400">Escalation thresholds:</span>
+            <span>Warn at <input id="previewWarningSecInput" type="number" min="2" max="60" value="5" class="w-12 bg-neutral-900 border border-neutral-700 rounded px-1 text-center font-mono">s</span>
+            <span>· Block at <input id="previewBlockSecInput" type="number" min="5" max="180" value="10" class="w-12 bg-neutral-900 border border-neutral-700 rounded px-1 text-center font-mono">s</span>
+          </div>
+          <span class="text-neutral-400 italic">Rules automatically relax during breaks</span>
+        </div>
+      </div>
+
+      <div class="modal-actions pt-3 border-t border-neutral-800">
+        <button type="button" class="button button-quiet" onclick="closePlanPreviewModal()">Cancel</button>
+        <button type="button" class="button button-primary" onclick="confirmAndStartGoalSession()">
+          <i data-lucide="play"></i>
+          <span>Activate & Start Session</span>
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Goal Session Completion Modal -->
+  <div id="goalCompletionModal" class="modal-overlay hidden" role="dialog" aria-modal="true">
+    <div class="modal-card text-center" style="max-width: 440px;">
+      <div class="w-12 h-12 rounded-full bg-emerald-500/20 text-emerald-400 flex items-center justify-center mx-auto mb-3">
+        <i data-lucide="trophy" class="w-6 h-6"></i>
+      </div>
+      <span class="eyebrow text-emerald-400">Session Complete</span>
+      <h2 id="completionGoalTitle" class="text-xl font-bold mt-1">Great Job!</h2>
+      <p id="completionMessageText" class="text-xs text-neutral-400 mt-1 mb-4">You completed your planned focus session. Pre-session policies have been restored.</p>
+      
+      <div class="stats-grid mb-4">
+        <div class="stat-card p-3">
+          <span class="text-xs text-neutral-400">Planned Duration</span>
+          <b id="completionTotalDuration" class="text-base">2h 00m</b>
+        </div>
+        <div class="stat-card p-3">
+          <span class="text-xs text-neutral-400">Focus Blocks</span>
+          <b id="completionFocusBlocks" class="text-base">4 Completed</b>
+        </div>
+      </div>
+
+      <button class="button button-primary full" onclick="closeGoalCompletionModal()">
+        <i data-lucide="check"></i>Return to Overview
+      </button>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>

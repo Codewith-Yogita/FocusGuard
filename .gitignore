@@ -15,6 +15,9 @@ bin/
 screen_frames/
 screen_ocr.bmp
 ocr_result.txt
+active_goal_session.json
+pre_goal_policies_backup.json
+tools/active_goal.json
 
 # Python
 __pycache__/

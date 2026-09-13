@@ -1,0 +1,90 @@
+[
+  {
+    "application": "Visual Studio Code",
+    "mode": "ALLOW",
+    "maxDurationSeconds": 0,
+    "cooldownSeconds": 0,
+    "icon": "code-2",
+    "description": "Allowed tool for active focus goal."
+  },
+  {
+    "application": "CLion",
+    "mode": "ALLOW",
+    "maxDurationSeconds": 0,
+    "cooldownSeconds": 0,
+    "icon": "code-2",
+    "description": "Allowed tool for active focus goal."
+  },
+  {
+    "application": "Terminal",
+    "mode": "ALLOW",
+    "maxDurationSeconds": 0,
+    "cooldownSeconds": 0,
+    "icon": "code-2",
+    "description": "Allowed tool for active focus goal."
+  },
+  {
+    "application": "Notion",
+    "mode": "ALLOW",
+    "maxDurationSeconds": 0,
+    "cooldownSeconds": 0,
+    "icon": "code-2",
+    "description": "Allowed tool for active focus goal."
+  },
+  {
+    "application": "Obsidian",
+    "mode": "ALLOW",
+    "maxDurationSeconds": 0,
+    "cooldownSeconds": 0,
+    "icon": "code-2",
+    "description": "Allowed tool for active focus goal."
+  },
+  {
+    "application": "PDF Reader",
+    "mode": "ALLOW",
+    "maxDurationSeconds": 0,
+    "cooldownSeconds": 0,
+    "icon": "code-2",
+    "description": "Allowed tool for active focus goal."
+  },
+  {
+    "application": "YouTube",
+    "mode": "CONTENT_AWARE",
+    "maxDurationSeconds": 60,
+    "cooldownSeconds": 300,
+    "icon": "play",
+    "description": "Educational YouTube content allowed; Shorts restricted."
+  },
+  {
+    "application": "Instagram",
+    "mode": "BLOCK",
+    "maxDurationSeconds": 5,
+    "cooldownSeconds": 300,
+    "icon": "shield-alert",
+    "description": "Restricted distraction during active focus interval."
+  },
+  {
+    "application": "Snapchat",
+    "mode": "BLOCK",
+    "maxDurationSeconds": 5,
+    "cooldownSeconds": 300,
+    "icon": "shield-alert",
+    "description": "Restricted distraction during active focus interval."
+  },
+  {
+    "application": "TikTok",
+    "mode": "BLOCK",
+    "maxDurationSeconds": 5,
+    "cooldownSeconds": 300,
+    "icon": "shield-alert",
+    "description": "Restricted distraction during active focus interval."
+  },
+  {
+    "application": "VS Code",
+    "mode": "ALLOW",
+    "maxDurationSeconds": 0,
+    "cooldownSeconds": 0,
+    "icon": "code-2",
+    "description": "Primary development environment."
+  }
+]

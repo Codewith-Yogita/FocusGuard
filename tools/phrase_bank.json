@@ -1,0 +1,39 @@
+{
+  "version": 1,
+  "updated_at": 1789016043.2461874,
+  "phrases": {
+    "block": [
+      "Focus Guard paused {app}. You chose to set this boundary—time to refocus on your main goal!",
+      "{app} is currently restricted. Take a breath and return to what you set out to accomplish.",
+      "Gentle reminder: {app} is on your block list. Let's direct your attention back to your priorities.",
+      "Stepping away from {app} now. A quick break or refocusing can help you stay on track.",
+      "Your focus plan restricted {app}. You're doing great—keep building that momentum!"
+    ],
+    "limit": [
+      "You've been on {app} for {duration} min. Time to switch gears and get back to your priority.",
+      "Time check: {duration} min spent on {app}. Ready to return to your goal?",
+      "You've reached your {duration} min limit on {app}. Let's bring your attention back to your task.",
+      "That's {duration} min on {app}. Honoring your boundary now will feel rewarding later!",
+      "Notice your screen time: {duration} min on {app}. Time to refocus on what matters today."
+    ],
+    "cooldown": [
+      "{app} is in cooldown for {cooldown}s. Step back, stretch, and let your focus reset.",
+      "Focus Guard cooldown active on {app} ({cooldown}s remaining). Time to dive back into your flow.",
+      "{app} will remain paused for {cooldown}s so you can stay in your productive zone.",
+      "Cooldown in progress: {cooldown}s left on {app}. Use this moment to re-center.",
+      "{app} is cooling down for {cooldown}s. Great opportunity to finish your current work."
+    ],
+    "reminder": [
+      "A quick nudge: you've been on {app} for {duration} min. Is this serving your goal today?",
+      "Mindful check-in: {duration} min on {app}. Just checking if you intended to spend this time here.",
+      "Heads up: {duration} min active on {app}. Keep an eye on your plan!",
+      "Friendly reminder: {duration} min on {app}. Stay mindful of your focus goals."
+    ],
+    "focus_win": [
+      "Fantastic focus session! You spent {duration} min engaged in productive work.",
+      "Great job staying on task! {duration} min of dedicated progress achieved.",
+      "Momentum unlocked: {duration} min of deep focus completed. Keep it up!",
+      "Solid work: {duration} min in your productive flow. You're making real progress!"
+    ]
+  }
+}
