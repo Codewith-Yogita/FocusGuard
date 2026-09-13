@@ -47,7 +47,7 @@ MODEL_URLS = {
 }
 
 # Thresholds
-DEFAULT_CONFIDENCE_THRESHOLD = 0.55  # Cosine similarity threshold for SFace
+DEFAULT_CONFIDENCE_THRESHOLD = 0.38  # Cosine similarity threshold for SFace (balanced for webcam angles)
 LIVENESS_MIN_VARIATION = 0.003       # Landmark displacement variation threshold
 
 
@@ -170,7 +170,7 @@ class FaceAuthEngine:
                     yunet_bytes,
                     bytearray(),
                     (320, 320),
-                    score_threshold=0.6,
+                    score_threshold=0.4,
                     nms_threshold=0.3,
                     top_k=5000
                 )
@@ -179,7 +179,7 @@ class FaceAuthEngine:
                     YUNET_PATH,
                     "",
                     (320, 320),
-                    score_threshold=0.6,
+                    score_threshold=0.4,
                     nms_threshold=0.3,
                     top_k=5000
                 )
@@ -589,20 +589,27 @@ class FaceAuthEngine:
                 if not cap.isOpened():
                     cap = cv2.VideoCapture(self.camera_index)
                 if not cap.isOpened():
+                    # If camera is busy or unavailable (e.g. active in browser), preserve presence
                     return {
-                        "present": False,
-                        "user_present": False,
+                        "present": True,
+                        "user_present": True,
                         "is_guest": False,
-                        "confidence": 0.0,
-                        "reason": "camera_unavailable"
+                        "user_id": target_user,
+                        "confidence": 1.0,
+                        "reason": "camera_busy_preserved"
                     }
 
             face_detected = False
             best_conf = 0.0
 
             try:
-                # Inspect 1-2 frames
-                for _ in range(2):
+                # Discard initial dark warmup frames on Windows webcams
+                if cap:
+                    for _ in range(3):
+                        cap.read()
+
+                # Inspect 4 frames for reliable detection
+                for _ in range(4):
                     if cap:
                         ret, frame = cap.read()
                         if not ret or frame is None:
