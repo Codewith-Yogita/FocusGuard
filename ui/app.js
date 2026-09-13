@@ -150,15 +150,30 @@ let isDistractionActive = false;
 let restrictedCooldowns = {};
 
 let isUserPresent = true;
+let isEnrolledUserWatching = true;
+let isGuestWatching = false;
+let isEnforcementActive = true;
 let presenceCountdown = 60;
 let isSessionLocked = false;
-let currentUser = localStorage.getItem("focusguard_current_user") || "anshu";
+let currentUser = localStorage.getItem("focusguard_current_user");
+if (!currentUser || currentUser === "anshu") {
+  currentUser = "Yogita";
+  try { localStorage.setItem("focusguard_current_user", "Yogita"); } catch(e) {}
+}
 let isFocusActive = false;
-let allUsers = JSON.parse(localStorage.getItem("focusguard_all_users") || '["anshu"]');
+let allUsers = ["Yogita"];
+try {
+  const savedAll = JSON.parse(localStorage.getItem("focusguard_all_users") || '["Yogita"]');
+  allUsers = savedAll.filter(u => u !== "anshu");
+  if (allUsers.length === 0) allUsers = ["Yogita"];
+  localStorage.setItem("focusguard_all_users", JSON.stringify(allUsers));
+} catch (e) {
+  allUsers = ["Yogita"];
+}
 let enrolledFaceUsers = [];
 try {
   const savedFaces = localStorage.getItem("focusguard_enrolled_faces");
-  if (savedFaces) enrolledFaceUsers = JSON.parse(savedFaces);
+  if (savedFaces) enrolledFaceUsers = JSON.parse(savedFaces).filter(u => u !== "anshu");
 } catch (e) {}
 
 let sessionStats = {
@@ -441,6 +456,9 @@ async function pollBackendStatus() {
 
         if (data.presence && typeof data.presence === "object") {
           isUserPresent = data.presence.present !== false;
+          isEnrolledUserWatching = data.presence.user_present !== false;
+          isGuestWatching = !!data.presence.is_guest;
+          isEnforcementActive = data.presence.enforcement_active !== false;
           if (typeof data.presence.secondsUntilLock === "number") {
             presenceCountdown = data.presence.secondsUntilLock;
           }
@@ -787,23 +805,44 @@ function updatePresenceUI() {
   const presProgress = document.getElementById("presenceProgressBar");
   const simBtnText = document.getElementById("simPresenceBtnText");
 
-  if (isUserPresent) {
+  if (isGuestWatching) {
     if (badge) {
-      badge.textContent = "Present (Face Visible)";
+      badge.textContent = "Guest Detected (Rules Paused)";
+      badge.className = "font-bold text-amber-400 font-mono";
+    }
+    if (headerBadge) {
+      headerBadge.textContent = "Guest Mode (Flawless Apps)";
+      headerBadge.className = "text-xs font-bold text-amber-400";
+    }
+    if (headerDot) {
+      headerDot.className = "status-dot bg-amber-400";
+    }
+    if (presCountEl) {
+      presCountEl.textContent = "Restrictions paused · Non-enrolled person using laptop";
+    }
+    if (presProgress) {
+      presProgress.style.width = "100%";
+      presProgress.className = "progress-bar-fill bg-amber-400";
+    }
+    if (simBtnText) simBtnText.textContent = "Simulate user returned";
+  } else if (isUserPresent && isEnrolledUserWatching) {
+    if (badge) {
+      badge.textContent = `${currentUser} Verified (Focus Active)`;
       badge.className = "font-bold text-emerald-500 font-mono";
     }
     if (headerBadge) {
-      headerBadge.textContent = "Present";
+      headerBadge.textContent = `${currentUser} Present`;
       headerBadge.className = "text-xs font-bold text-emerald-500";
     }
     if (headerDot) {
-      headerDot.className = "status-dot";
+      headerDot.className = "status-dot bg-emerald-500";
     }
     if (presCountEl) {
       presCountEl.textContent = `Auto-lock armed · ${presenceCountdown}s`;
     }
     if (presProgress) {
       presProgress.style.width = `${(presenceCountdown / 60) * 100}%`;
+      presProgress.className = "progress-bar-fill bg-emerald-500";
     }
     if (simBtnText) simBtnText.textContent = "Simulate user away";
   } else {
@@ -823,6 +862,7 @@ function updatePresenceUI() {
     }
     if (presProgress) {
       presProgress.style.width = `${(presenceCountdown / 60) * 100}%`;
+      presProgress.className = "progress-bar-fill bg-rose-500";
     }
     if (simBtnText) simBtnText.textContent = "Simulate user returned";
   }
@@ -1894,11 +1934,11 @@ function updateUserUI() {
   }
 }
 
-let enrollTargetUser = currentUser || "anshu";
+let enrollTargetUser = currentUser || "Yogita";
 let enrollWebcamStream = null;
 
 function triggerEnrollFace(userName) {
-  enrollTargetUser = (userName || currentUser || "anshu").trim();
+  enrollTargetUser = (userName || currentUser || "Yogita").trim();
   const modal = document.getElementById("faceEnrollModal");
   if (!modal) return;
 
@@ -2132,21 +2172,30 @@ async function openSwitchUserModal() {
   try {
     const res = await apiFetch("/api/users", { method: "GET" });
     if (res.ok && res.data) {
-      allUsers = res.data.users || [currentUser];
-      enrolledFaceUsers = res.data.enrolledFaceUsers || [];
+      allUsers = (res.data.users || [currentUser]).filter(u => u !== "anshu");
+      enrolledFaceUsers = (res.data.enrolledFaceUsers || []).filter(u => u !== "anshu");
       currentUser = res.data.currentUser || currentUser;
+      if (currentUser === "anshu") currentUser = allUsers[0] || "Yogita";
     } else {
       const savedUsers = JSON.parse(localStorage.getItem("focusguard_all_users") || JSON.stringify([currentUser]));
-      allUsers = Array.from(new Set([...allUsers, ...savedUsers]));
-      enrolledFaceUsers = JSON.parse(localStorage.getItem("focusguard_enrolled_faces") || '[]');
+      allUsers = Array.from(new Set([...allUsers, ...savedUsers])).filter(u => u !== "anshu");
+      enrolledFaceUsers = JSON.parse(localStorage.getItem("focusguard_enrolled_faces") || '[]').filter(u => u !== "anshu");
       currentUser = localStorage.getItem("focusguard_current_user") || currentUser;
+      if (currentUser === "anshu") currentUser = allUsers[0] || "Yogita";
     }
   } catch (e) {
     const savedUsers = JSON.parse(localStorage.getItem("focusguard_all_users") || JSON.stringify([currentUser]));
-    allUsers = Array.from(new Set([...allUsers, ...savedUsers]));
-    enrolledFaceUsers = JSON.parse(localStorage.getItem("focusguard_enrolled_faces") || '[]');
+    allUsers = Array.from(new Set([...allUsers, ...savedUsers])).filter(u => u !== "anshu");
+    enrolledFaceUsers = JSON.parse(localStorage.getItem("focusguard_enrolled_faces") || '[]').filter(u => u !== "anshu");
     currentUser = localStorage.getItem("focusguard_current_user") || currentUser;
+    if (currentUser === "anshu") currentUser = allUsers[0] || "Yogita";
   }
+
+  if (allUsers.length === 0) allUsers = ["Yogita"];
+  try {
+    localStorage.setItem("focusguard_all_users", JSON.stringify(allUsers));
+    localStorage.setItem("focusguard_current_user", currentUser);
+  } catch(e) {}
 
   renderUsersListModal();
   updateUserUI();
@@ -2184,11 +2233,43 @@ function renderUsersListModal() {
         <div class="flex items-center gap-2">
           ${!isEnrolled ? `<button class="button button-warning button-small" onclick="triggerEnrollFace('${escapeHtml(user)}')"><i data-lucide="scan-face"></i>Enroll Face</button>` : `<button class="button button-quiet button-small" onclick="triggerEnrollFace('${escapeHtml(user)}')"><i data-lucide="refresh-cw"></i>Re-enroll</button>`}
           ${isCurrent ? '<span class="text-xs text-emerald-400 font-medium px-2.5 py-1 bg-emerald-950/60 rounded-md border border-emerald-800">Current</span>' : `<button class="button button-secondary button-small" onclick="switchActiveUser('${escapeHtml(user)}')">Switch</button>`}
+          ${allUsers.length > 1 ? `<button class="button button-quiet button-small text-rose-400 hover:text-rose-300 hover:bg-rose-950/40" title="Delete Profile" onclick="deleteUserProfile('${escapeHtml(user)}')"><i data-lucide="trash-2"></i></button>` : ''}
         </div>
       </div>
     `;
   }).join("");
   if (window.lucide) lucide.createIcons();
+}
+
+async function deleteUserProfile(userName) {
+  if (!userName) return;
+  if (!confirm(`Are you sure you want to delete profile '${userName}'?`)) return;
+  try {
+    const res = await apiFetch("/api/users/delete", {
+      method: "POST",
+      body: JSON.stringify({ user_id: userName })
+    });
+    if (res.ok && res.data) {
+      allUsers = (res.data.users || allUsers.filter(u => u !== userName)).filter(u => u !== "anshu");
+      currentUser = res.data.currentUser || (allUsers[0] || "Yogita");
+    } else {
+      allUsers = allUsers.filter(u => u !== userName && u !== "anshu");
+      if (currentUser === userName) currentUser = allUsers[0] || "Yogita";
+    }
+  } catch (e) {
+    allUsers = allUsers.filter(u => u !== userName && u !== "anshu");
+    if (currentUser === userName) currentUser = allUsers[0] || "Yogita";
+  }
+
+  if (allUsers.length === 0) allUsers = ["Yogita"];
+  try {
+    localStorage.setItem("focusguard_all_users", JSON.stringify(allUsers));
+    localStorage.setItem("focusguard_current_user", currentUser);
+  } catch (e) {}
+
+  renderUsersListModal();
+  updateUserUI();
+  checkFaceStatus();
 }
 
 async function switchActiveUser(userName) {
@@ -2363,7 +2444,7 @@ async function startFaceEnrollment() {
   const overlayFrame = document.getElementById("scannerOverlayFrame");
 
   const userNameInput = document.getElementById("enrollUserNameInput");
-  const enrollUser = (userNameInput ? userNameInput.value.trim() : "") || currentUser || "anshu";
+  const enrollUser = (userNameInput ? userNameInput.value.trim() : "") || currentUser || "Yogita";
 
   if (!activeWebcamStream) {
     await toggleEnrollWebcam();

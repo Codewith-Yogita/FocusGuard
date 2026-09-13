@@ -197,10 +197,10 @@ def load_user_profiles():
             pass
 
     default_data = {
-        "currentUser": "anshu",
+        "currentUser": "Yogita",
         "focusSessionActive": False,
         "users": {
-            "anshu": initial_policies
+            "Yogita": initial_policies
         }
     }
     save_user_profiles(default_data)
@@ -223,13 +223,15 @@ def get_current_user():
     global current_user
     profiles = load_user_profiles()
     current_user = profiles.get("currentUser", current_user)
+    if not current_user or current_user == "anshu":
+        current_user = "Yogita"
     return current_user
 
 
 def set_current_user(user_name):
     """Switches active user profile and syncs policies to policies.json for C++ daemon."""
     global current_user
-    user_name = user_name.strip() if user_name else "anshu"
+    user_name = user_name.strip() if user_name else "Yogita"
     current_user = user_name
     profiles = load_user_profiles()
     profiles["currentUser"] = user_name
@@ -654,8 +656,24 @@ class FocusGuardRequestHandler(http.server.SimpleHTTPRequestHandler):
                 "model": "Qwen 2.5-VL"
             }
 
-            # Presence check (use cached state to avoid locking webcam on every status poll)
+            # Presence & Face-Gated Enforcement Check
+            curr_user = get_current_user()
+            is_user_enrolled = False
+            if HAS_FACE_AUTH:
+                try:
+                    engine = get_face_auth_engine()
+                    is_user_enrolled = engine.is_enrolled(curr_user)
+                except Exception:
+                    pass
+
             present = last_presence_state.get("present", True)
+            user_present = last_presence_state.get("user_present", True if not is_user_enrolled else present)
+            is_guest = last_presence_state.get("is_guest", False)
+            identified_user = last_presence_state.get("identified_user", curr_user if user_present else ("guest" if is_guest else None))
+
+            # Enforcement applies ONLY when enrolled user is watching (or no face ID enrolled)
+            # If someone whose face is NOT enrolled (Guest) is watching, personal restrictions are PAUSED!
+            enforcement_active = (not is_user_enrolled) or (user_present and not is_guest)
 
             # Model detection check (true only when live daemon/vision model actively tracks real windows)
             model_detected = False
@@ -666,7 +684,7 @@ class FocusGuardRequestHandler(http.server.SimpleHTTPRequestHandler):
                 "daemonConnected": daemon_connected,
                 "modelDetected": model_detected,
                 "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(now)),
-                "currentUser": get_current_user(),
+                "currentUser": curr_user,
                 "focusSessionActive": is_focus_active,
                 "currentTarget": current_target,
                 "focus": {
@@ -676,6 +694,11 @@ class FocusGuardRequestHandler(http.server.SimpleHTTPRequestHandler):
                 },
                 "presence": {
                     "present": present,
+                    "user_present": user_present,
+                    "is_guest": is_guest,
+                    "identified_user": identified_user,
+                    "is_enrolled": is_user_enrolled,
+                    "enforcement_active": enforcement_active,
                     "autoLockEnabled": True,
                     "secondsUntilLock": 60
                 },
@@ -719,7 +742,7 @@ class FocusGuardRequestHandler(http.server.SimpleHTTPRequestHandler):
             })
 
         # 3. Face Auth Status
-        if path == "/api/face/status":
+        if path in ("/api/face/status", "/face/status"):
             is_enrolled = False
             template_info = {}
             enrolled_users = []
@@ -822,6 +845,37 @@ class FocusGuardRequestHandler(http.server.SimpleHTTPRequestHandler):
                 "message": f"Logged out from '{prev_user}'.",
                 "previousUser": prev_user
             })
+
+        # 1c. Multi-User Profile Delete / Remove
+        if path == "/api/users/delete":
+            target_user = payload.get("user_id", "").strip()
+            if not target_user:
+                return self._send_json(400, {"success": False, "error": "user_id is required"})
+            profiles = load_user_profiles()
+            users_dict = profiles.get("users", {})
+            if target_user in users_dict:
+                del users_dict[target_user]
+                if HAS_FACE_AUTH:
+                    try:
+                        engine = get_face_auth_engine()
+                        engine.reset(target_user)
+                    except Exception:
+                        pass
+                if profiles.get("currentUser") == target_user:
+                    remaining = list(users_dict.keys())
+                    new_curr = remaining[0] if remaining else "Yogita"
+                    profiles["currentUser"] = new_curr
+                    if new_curr not in users_dict:
+                        users_dict[new_curr] = [dict(p) for p in DEFAULT_POLICIES]
+                    set_current_user(new_curr)
+                save_user_profiles(profiles)
+                return self._send_json(200, {
+                    "success": True,
+                    "message": f"Profile '{target_user}' removed successfully.",
+                    "currentUser": profiles.get("currentUser"),
+                    "users": list(users_dict.keys())
+                })
+            return self._send_json(404, {"success": False, "error": f"User '{target_user}' not found."})
 
         # 2. Focus Session Start / Stop (Enforces active user's rules)
         if path == "/api/focus/start":
@@ -1107,7 +1161,7 @@ class FocusGuardRequestHandler(http.server.SimpleHTTPRequestHandler):
             })
 
         # 3. Face Enrollment (Accepts user_id and base64 video frames from browser)
-        if path == "/api/face/enroll":
+        if path in ("/api/face/enroll", "/face/enroll"):
             user_id = str(payload.get("user_id") or get_current_user()).strip()
             image = payload.get("image")
             frames = payload.get("frames")
@@ -1131,7 +1185,7 @@ class FocusGuardRequestHandler(http.server.SimpleHTTPRequestHandler):
                 })
 
         # 4. Face Identify (Identifies who is in front of screen, switches to their profile & rules)
-        if path == "/api/face/identify":
+        if path in ("/api/face/identify", "/face/identify"):
             image = payload.get("image")
             if HAS_FACE_AUTH:
                 try:
@@ -1139,7 +1193,7 @@ class FocusGuardRequestHandler(http.server.SimpleHTTPRequestHandler):
                     res = engine.authenticate(user_id="any", image=image, timeout_ms=4000)
                     matched = res.get("authenticated", False)
                     matched_user = res.get("user_id")
-                    if matched and matched_user and matched_user != "unknown":
+                    if matched and matched_user and matched_user not in ("unknown", "guest"):
                         new_policies = set_current_user(matched_user)
                         return self._send_json(200, {
                             "success": True,
@@ -1148,15 +1202,18 @@ class FocusGuardRequestHandler(http.server.SimpleHTTPRequestHandler):
                             "confidence": res.get("confidence", 0.0),
                             "currentUser": matched_user,
                             "policies": new_policies,
+                            "is_guest": False,
                             "message": f"Face identified: {matched_user}"
                         })
                     else:
+                        is_guest = res.get("is_guest", False)
                         return self._send_json(200, {
                             "success": False,
                             "authenticated": False,
+                            "is_guest": is_guest,
                             "reason": res.get("reason", "no_match"),
                             "confidence": res.get("confidence", 0.0),
-                            "message": res.get("message", "Face not recognized. Please position your face or enroll first.")
+                            "message": res.get("message", "Guest / Unrecognized face detected. Restrictions paused." if is_guest else "Face not recognized. Please position your face or enroll first.")
                         })
                 except Exception as ex:
                     return self._send_json(200, {
@@ -1178,7 +1235,7 @@ class FocusGuardRequestHandler(http.server.SimpleHTTPRequestHandler):
                 })
 
         # 5. Face Authenticate / Unlock
-        if path == "/api/face/authenticate":
+        if path in ("/api/face/authenticate", "/face/authenticate"):
             user_id = payload.get("user_id", "any")
             image = payload.get("image")
             if HAS_FACE_AUTH:
@@ -1191,7 +1248,7 @@ class FocusGuardRequestHandler(http.server.SimpleHTTPRequestHandler):
                     elif reason == "camera_unavailable":
                         reason = "camera_error"
                     res["reason"] = reason
-                    if res.get("authenticated") and res.get("user_id") and res.get("user_id") != "unknown":
+                    if res.get("authenticated") and res.get("user_id") and res.get("user_id") not in ("unknown", "guest"):
                         matched_user = res.get("user_id")
                         new_pols = set_current_user(matched_user)
                         res["currentUser"] = matched_user
@@ -1217,13 +1274,15 @@ class FocusGuardRequestHandler(http.server.SimpleHTTPRequestHandler):
                     "message": f"Face authenticated successfully for {curr} (Simulated mode)."
                 })
 
-        # 3. Presence Check
-        if path == "/api/face/presence":
+        # 3. Presence Check (Fast presence & guest verification)
+        if path in ("/api/face/presence", "/face/presence"):
             global last_presence_state
+            target_user = payload.get("user_id") or get_current_user()
+            image = payload.get("image")
             if HAS_FACE_AUTH:
                 try:
                     engine = get_face_auth_engine()
-                    res = engine.check_presence()
+                    res = engine.check_presence(user_id=target_user, image=image)
                     last_presence_state = res
                     return self._send_json(200, res)
                 except Exception as ex:
@@ -1231,6 +1290,9 @@ class FocusGuardRequestHandler(http.server.SimpleHTTPRequestHandler):
             else:
                 res = {
                     "present": True,
+                    "user_present": True,
+                    "is_guest": False,
+                    "user_id": target_user,
                     "confidence": 0.92,
                     "message": "User present in front of screen."
                 }
@@ -1271,15 +1333,12 @@ class FocusGuardRequestHandler(http.server.SimpleHTTPRequestHandler):
                 })
 
         # 6. Reset Face Template
-        if path == "/api/face/reset":
+        if path in ("/api/face/reset", "/face/reset"):
             target_user = payload.get("user_id")
             if HAS_FACE_AUTH:
                 try:
                     engine = get_face_auth_engine()
-                    if target_user and target_user != "all":
-                        engine.delete_user(target_user)
-                    else:
-                        engine.reset_enrollment()
+                    engine.reset(target_user)
                 except Exception as ex:
                     print(f"[Reset Error] {ex}")
             return self._send_json(200, {
@@ -1503,6 +1562,26 @@ def find_available_port(start_port):
     return start_port
 
 
+def start_presence_monitor():
+    """Continuously verifies if the enrolled user is watching the screen in the background."""
+    def _worker():
+        global last_presence_state
+        while True:
+            try:
+                time.sleep(3.5)
+                if HAS_FACE_AUTH:
+                    engine = get_face_auth_engine()
+                    enrolled = engine.list_enrolled_users()
+                    if enrolled:
+                        curr = get_current_user()
+                        res = engine.check_presence(user_id=curr)
+                        last_presence_state = res
+            except Exception:
+                time.sleep(4.0)
+    t = threading.Thread(target=_worker, daemon=True)
+    t.start()
+
+
 def run_server(requested_port=DEFAULT_PORT):
     os.chdir(UI_DIR)
     socketserver.TCPServer.allow_reuse_address = True
@@ -1512,6 +1591,8 @@ def run_server(requested_port=DEFAULT_PORT):
         print(f"[!] Port {port} is currently in use.")
         port = find_available_port(port + 1)
         print(f"[*] Automatically switched to available port: {port}\n")
+
+    start_presence_monitor()
 
     try:
         with http.server.ThreadingHTTPServer(("0.0.0.0", port), FocusGuardRequestHandler) as httpd:

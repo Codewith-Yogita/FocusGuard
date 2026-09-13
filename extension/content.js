@@ -69,29 +69,61 @@
     return null;
   }
 
+  let isEnforcementActive = true;
+  let isUserEnrolled = false;
+  let isGuestUser = false;
+  let isEnrolledUserWatching = true;
+
   function isGoalPaused() {
     return Date.now() < goalPausedUntil;
   }
 
-  // Check goal pause status from FocusGuard local server
+  // Check goal pause status & face-gated user presence from FocusGuard
   async function syncGoalStatus() {
     try {
+      // 1. Sync presence and enforcement status
+      const statusRes = await fetchFromAnyServer("/api/status");
+      if (statusRes && statusRes.ok) {
+        const data = await statusRes.json();
+        if (data.focus?.goalPausedUntil) {
+          const until = new Date(data.focus.goalPausedUntil).getTime();
+          if (until > Date.now()) {
+            goalPausedUntil = until;
+            dismissAllDomHud();
+          } else {
+            goalPausedUntil = 0;
+          }
+        }
+
+        if (data.presence) {
+          isUserEnrolled = !!data.presence.is_enrolled;
+          isGuestUser = !!data.presence.is_guest;
+          isEnrolledUserWatching = data.presence.user_present !== false;
+          if (data.presence.enforcement_active !== undefined) {
+            isEnforcementActive = !!data.presence.enforcement_active;
+          } else if (isUserEnrolled) {
+            isEnforcementActive = isEnrolledUserWatching && !isGuestUser;
+          } else {
+            isEnforcementActive = true;
+          }
+        }
+      }
+
+      // 2. Sync quick goal status
       const res = await fetchFromAnyServer("/api/goal/status");
       if (res && res.ok) {
         const data = await res.json();
         if (data.is_paused) {
           goalPausedUntil = Date.now() + (data.remaining_seconds * 1000);
           dismissAllDomHud();
-        } else {
-          goalPausedUntil = 0;
         }
       }
     } catch {
-      // Server offline, use local in-memory pause
+      // Server offline, use local in-memory state
     }
   }
 
-  setInterval(syncGoalStatus, 2500);
+  setInterval(syncGoalStatus, 2000);
   syncGoalStatus();
 
   function isDistractionSite(href, title) {
@@ -670,7 +702,21 @@
     const currentTitle = document.title;
     const isDistraction = isDistractionSite(currentHref, currentTitle);
 
-    evaluatePage();
+    // ============================================================
+    // FACE-GATED RESTRICTIONS (GUEST vs ENROLLED USER)
+    // ============================================================
+    // If Face ID is enrolled, FocusGuard applies restrictions ONLY when
+    // the enrolled user is verified watching the screen.
+    // If someone else (Guest / non-enrolled person) is using the laptop,
+    // or if the enrolled user is not watching:
+    // ALL RESTRICTIONS ARE BYPASSED! Instagram, YouTube, etc. work flawlessly without warnings.
+    if (isUserEnrolled && (!isEnforcementActive || isGuestUser || !isEnrolledUserWatching)) {
+      if (streakSeconds > 0) {
+        streakSeconds = 0;
+        dismissAllDomHud();
+      }
+      return;
+    }
 
     // If page is not a distraction or recognized as productive for active goal, reset streak
     if (!isDistraction || isPageProductive) {
