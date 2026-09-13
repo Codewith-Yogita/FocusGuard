@@ -650,7 +650,7 @@ class FaceAuthEngine:
                 # Face is in front of screen, but biometric template DOES NOT MATCH enrolled user!
                 # This is a GUEST. FocusGuard policies must pause so they can use apps flawlessly.
                 return {
-                    "present": False,
+                    "present": True,
                     "user_present": False,
                     "is_guest": True,
                     "user_id": "guest",

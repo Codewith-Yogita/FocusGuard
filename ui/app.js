@@ -460,13 +460,14 @@ async function pollBackendStatus() {
         }
 
         if (data.presence && typeof data.presence === "object") {
-          isUserPresent = data.presence.present !== false;
-          isEnrolledUserWatching = data.presence.user_present !== false;
-          isGuestWatching = !!data.presence.is_guest;
-          isEnforcementActive = data.presence.enforcement_active !== false;
+          isGuestWatching = !!data.presence.is_guest || (data.presence.identified_user === "guest");
+          isUserPresent = data.presence.present === true;
+          isEnrolledUserWatching = (data.presence.user_present === true) && !isGuestWatching;
+          isEnforcementActive = data.presence.enforcement_active === true && !isGuestWatching;
           if (typeof data.presence.secondsUntilLock === "number") {
             presenceCountdown = data.presence.secondsUntilLock;
           }
+          updatePresenceUI();
         }
 
         if (Array.isArray(data.cooldowns)) {

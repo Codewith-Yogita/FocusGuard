@@ -666,14 +666,17 @@ class FocusGuardRequestHandler(http.server.SimpleHTTPRequestHandler):
                 except Exception:
                     pass
 
-            present = last_presence_state.get("present", True)
-            user_present = last_presence_state.get("user_present", True if not is_user_enrolled else present)
+            present = last_presence_state.get("present", False)
+            user_present = last_presence_state.get("user_present", False)
             is_guest = last_presence_state.get("is_guest", False)
-            identified_user = last_presence_state.get("identified_user", curr_user if user_present else ("guest" if is_guest else None))
 
-            # Enforcement applies ONLY when enrolled user is watching (or no face ID enrolled)
-            # If someone whose face is NOT enrolled (Guest) is watching, personal restrictions are PAUSED!
-            enforcement_active = (not is_user_enrolled) or (user_present and not is_guest)
+            # If guest or face does not match enrolled user:
+            if is_guest or (is_user_enrolled and not user_present):
+                identified_user = "guest"
+                enforcement_active = False
+            else:
+                identified_user = curr_user if user_present else None
+                enforcement_active = True if not is_user_enrolled else user_present
 
             # Model detection check (true only when live daemon/vision model actively tracks real windows)
             model_detected = False

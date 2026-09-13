@@ -98,14 +98,12 @@
 
         if (data.presence) {
           isUserEnrolled = !!data.presence.is_enrolled;
-          isGuestUser = !!data.presence.is_guest;
-          isEnrolledUserWatching = data.presence.user_present !== false;
+          isGuestUser = !!data.presence.is_guest || (data.presence.identified_user === "guest");
+          isEnrolledUserWatching = (data.presence.user_present === true) && !isGuestUser;
           if (data.presence.enforcement_active !== undefined) {
-            isEnforcementActive = !!data.presence.enforcement_active;
-          } else if (isUserEnrolled) {
-            isEnforcementActive = isEnrolledUserWatching && !isGuestUser;
+            isEnforcementActive = !!data.presence.enforcement_active && !isGuestUser;
           } else {
-            isEnforcementActive = true;
+            isEnforcementActive = isEnrolledUserWatching && !isGuestUser;
           }
         }
       }
@@ -711,7 +709,7 @@
     // If someone else (Guest / non-enrolled person) is using the laptop,
     // or if the enrolled user is not watching:
     // ALL RESTRICTIONS ARE BYPASSED! Instagram, YouTube, etc. work flawlessly without warnings.
-    if (isUserEnrolled && (!isEnforcementActive || isGuestUser || !isEnrolledUserWatching)) {
+    if (!isEnforcementActive || isGuestUser || !isEnrolledUserWatching) {
       if (streakSeconds > 0) {
         streakSeconds = 0;
         dismissAllDomHud();
