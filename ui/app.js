@@ -149,31 +149,35 @@ let isDistractionActive = false;
 
 let restrictedCooldowns = {};
 
-let isUserPresent = true;
-let isEnrolledUserWatching = true;
+let isUserPresent = false;
+let isEnrolledUserWatching = false;
 let isGuestWatching = false;
-let isEnforcementActive = true;
+let isEnforcementActive = false;
 let presenceCountdown = 60;
 let isSessionLocked = false;
-let currentUser = localStorage.getItem("focusguard_current_user");
-if (!currentUser || currentUser === "anshu") {
-  currentUser = "Yogita";
-  try { localStorage.setItem("focusguard_current_user", "Yogita"); } catch(e) {}
+
+// Device-isolated session:
+// On a fresh device, start as unauthenticated (Guest) until user creates or logs into their profile on THIS device!
+let currentUser = localStorage.getItem("focusguard_current_user") || null;
+if (currentUser === "anshu") {
+  currentUser = null;
+  try { localStorage.removeItem("focusguard_current_user"); } catch(e) {}
 }
 let isFocusActive = false;
-let allUsers = ["Yogita"];
+let allUsers = [];
 try {
-  const savedAll = JSON.parse(localStorage.getItem("focusguard_all_users") || '["Yogita"]');
-  allUsers = savedAll.filter(u => u !== "anshu");
-  if (allUsers.length === 0) allUsers = ["Yogita"];
-  localStorage.setItem("focusguard_all_users", JSON.stringify(allUsers));
+  const savedAll = JSON.parse(localStorage.getItem("focusguard_all_users") || "[]");
+  allUsers = savedAll.filter(u => u && u !== "anshu");
 } catch (e) {
-  allUsers = ["Yogita"];
+  allUsers = [];
+}
+if (currentUser && !allUsers.includes(currentUser)) {
+  allUsers.push(currentUser);
 }
 let enrolledFaceUsers = [];
 try {
-  const savedFaces = localStorage.getItem("focusguard_enrolled_faces");
-  if (savedFaces) enrolledFaceUsers = JSON.parse(savedFaces).filter(u => u !== "anshu");
+  const savedFaces = JSON.parse(localStorage.getItem("focusguard_enrolled_faces") || "[]");
+  enrolledFaceUsers = savedFaces.filter(u => u && u !== "anshu");
 } catch (e) {}
 
 let sessionStats = {
@@ -399,8 +403,9 @@ async function pollBackendStatus() {
         }
       }
 
-      if (data.currentUser && data.currentUser !== currentUser) {
+      if (currentUser && data.currentUser && data.currentUser !== currentUser && data.currentUser !== "anshu") {
         currentUser = data.currentUser;
+        try { localStorage.setItem("focusguard_current_user", currentUser); } catch(e) {}
         updateUserUI();
       }
 
@@ -804,6 +809,29 @@ function updatePresenceUI() {
   const presCountEl = document.getElementById("presenceCountdownText");
   const presProgress = document.getElementById("presenceProgressBar");
   const simBtnText = document.getElementById("simPresenceBtnText");
+
+  if (!currentUser) {
+    if (badge) {
+      badge.textContent = "No Profile Active (Guest Mode)";
+      badge.className = "font-bold text-neutral-400 font-mono";
+    }
+    if (headerBadge) {
+      headerBadge.textContent = "Guest / Login";
+      headerBadge.className = "text-xs font-bold text-neutral-400";
+    }
+    if (headerDot) {
+      headerDot.className = "status-dot muted";
+    }
+    if (presCountEl) {
+      presCountEl.textContent = "Log in or enroll Face ID on this device to start";
+    }
+    if (presProgress) {
+      presProgress.style.width = "0%";
+      presProgress.className = "progress-bar-fill bg-neutral-600";
+    }
+    if (simBtnText) simBtnText.textContent = "Login / Enroll Face";
+    return;
+  }
 
   if (isGuestWatching) {
     if (badge) {
@@ -1916,29 +1944,61 @@ function captureVideoFrame(videoEl) {
 
 function updateUserUI() {
   const nameEl = document.getElementById("headerUserName");
-  if (nameEl) nameEl.textContent = currentUser;
+  if (nameEl) nameEl.textContent = currentUser ? currentUser : "Guest / Login";
   const enrollInput = document.getElementById("enrollUserNameInput");
-  if (enrollInput && (!enrollInput.value || enrollInput.value === "default")) {
-    enrollInput.value = currentUser;
+  if (enrollInput && (!enrollInput.value || enrollInput.value === "default" || enrollInput.value === "Guest / Login")) {
+    enrollInput.value = currentUser || "";
   }
 
-  // Header Enroll Face button: show if current user is not enrolled
+  // Header Enroll Face button: show if current user is not enrolled, or prompt to login
   const headerEnrollBtn = document.getElementById("headerEnrollFaceBtn");
   if (headerEnrollBtn) {
-    const isEnrolled = Array.isArray(enrolledFaceUsers) && enrolledFaceUsers.includes(currentUser);
+    const isEnrolled = currentUser && Array.isArray(enrolledFaceUsers) && enrolledFaceUsers.includes(currentUser);
     if (!isEnrolled) {
       headerEnrollBtn.classList.remove("hidden");
+      headerEnrollBtn.innerHTML = `<i data-lucide="scan-face"></i><span>${currentUser ? 'Enroll Face' : 'Face ID Login'}</span>`;
     } else {
       headerEnrollBtn.classList.add("hidden");
     }
   }
 }
 
-let enrollTargetUser = currentUser || "Yogita";
+let enrollTargetUser = currentUser || "";
 let enrollWebcamStream = null;
 
-function triggerEnrollFace(userName) {
-  enrollTargetUser = (userName || currentUser || "Yogita").trim();
+function triggerEnrollFace(userName, forceUnlocked = false) {
+  let target = (userName || currentUser || "").trim();
+  if (!target || target === "Guest / Login") {
+    target = prompt("Enter your name to register and enroll your Face ID profile on this device:") || "";
+    target = target.trim();
+    if (!target) return;
+    if (!allUsers.includes(target)) {
+      allUsers.push(target);
+      try { localStorage.setItem("focusguard_all_users", JSON.stringify(allUsers)); } catch(e) {}
+    }
+    currentUser = target;
+    try { localStorage.setItem("focusguard_current_user", target); } catch(e) {}
+    updateUserUI();
+  }
+  enrollTargetUser = target;
+
+  // Strict Anti-Cheating & Face-Locking:
+  // If Face ID is already enrolled for this user on this device:
+  // 1. You CANNOT modify face template while a focus session is active!
+  // 2. Requires PIN 1234 verification to unlock re-enrollment!
+  const alreadyEnrolled = Array.isArray(enrolledFaceUsers) && enrolledFaceUsers.includes(enrollTargetUser);
+  if (alreadyEnrolled && !forceUnlocked) {
+    if (isFocusActive) {
+      alert(`⛔ Anti-Evasion Lock Active!\nA Focus Session is currently running for '${enrollTargetUser}'.\nYou cannot change or detect another face during an active session to escape distraction rules!`);
+      return;
+    }
+    const pin = prompt(`🔒 Security PIN Required:\nFace ID is already locked for '${enrollTargetUser}'.\nEnter 4-digit Security PIN to verify identity before modifying biometric template:`);
+    if (pin !== "1234") {
+      alert("❌ Incorrect PIN. Face biometric template remains securely locked.");
+      return;
+    }
+  }
+
   const modal = document.getElementById("faceEnrollModal");
   if (!modal) return;
 
@@ -2062,13 +2122,17 @@ async function executeFaceEnrollment() {
       if (statusText) statusText.textContent = `✓ Successfully enrolled face for '${enrollTargetUser}'!`;
       playAlertBeep(880, 0.25, 2);
 
+      if (!allUsers.includes(enrollTargetUser)) {
+        allUsers.push(enrollTargetUser);
+      }
       if (!enrolledFaceUsers.includes(enrollTargetUser)) {
         enrolledFaceUsers.push(enrollTargetUser);
       }
-      if (enrollTargetUser === currentUser) {
-        isFaceEnrolled = true;
-      }
+      currentUser = enrollTargetUser;
+      isFaceEnrolled = true;
       try {
+        localStorage.setItem("focusguard_all_users", JSON.stringify(allUsers));
+        localStorage.setItem("focusguard_current_user", currentUser);
         localStorage.setItem("focusguard_enrolled_faces", JSON.stringify(enrolledFaceUsers));
       } catch (e) {}
 
@@ -2078,7 +2142,7 @@ async function executeFaceEnrollment() {
 
       setTimeout(() => {
         closeFaceEnrollModal();
-        alert(`✓ Face Biometric Enrolled Successfully for '${enrollTargetUser}'!\nBiometric template stored locally with encryption.`);
+        alert(`✓ Face Biometric Enrolled & Locked Successfully for '${enrollTargetUser}'!\nBiometric template stored locally with hardware encryption.`);
       }, 1200);
     } else {
       const errMsg = res.data?.message || res.data?.error || "Enrollment failed. Please ensure face is centered in camera.";
@@ -2089,20 +2153,24 @@ async function executeFaceEnrollment() {
     // Offline / Vercel fallback
     if (fill) fill.style.width = "100%";
     if (statusText) statusText.textContent = `✓ Biometric enrolled (Simulated) for '${enrollTargetUser}'!`;
+    if (!allUsers.includes(enrollTargetUser)) {
+      allUsers.push(enrollTargetUser);
+    }
     if (!enrolledFaceUsers.includes(enrollTargetUser)) {
       enrolledFaceUsers.push(enrollTargetUser);
     }
-    if (enrollTargetUser === currentUser) {
-      isFaceEnrolled = true;
-    }
+    currentUser = enrollTargetUser;
+    isFaceEnrolled = true;
     try {
+      localStorage.setItem("focusguard_all_users", JSON.stringify(allUsers));
+      localStorage.setItem("focusguard_current_user", currentUser);
       localStorage.setItem("focusguard_enrolled_faces", JSON.stringify(enrolledFaceUsers));
     } catch (e) {}
     updateUserUI();
     renderUsersListModal();
     setTimeout(() => {
       closeFaceEnrollModal();
-      alert(`✓ Face Biometric Enrolled Successfully for '${enrollTargetUser}'!`);
+      alert(`✓ Face Biometric Enrolled & Locked Successfully for '${enrollTargetUser}'!`);
     }, 1200);
   } finally {
     if (btn) btn.disabled = false;
@@ -2112,14 +2180,30 @@ async function executeFaceEnrollment() {
 
 async function logoutCurrentUser() {
   if (isFocusActive) {
-    const confirmStop = confirm(`A focus session is currently active for ${currentUser}. Stop it and log out?`);
+    const confirmStop = confirm(`A focus session is currently active for ${currentUser || 'current user'}. Stop it and log out?`);
     if (!confirmStop) return;
-    await apiFetch("/api/focus/stop", { method: "POST" });
+    try {
+      await apiFetch("/api/focus/stop", { method: "POST" });
+    } catch (e) {}
     isFocusActive = false;
     updateFocusButtonUI();
   }
 
-  await apiFetch("/api/users/logout", { method: "POST" });
+  try {
+    await apiFetch("/api/users/logout", { method: "POST" });
+  } catch (e) {}
+
+  // Device isolation: Clear session on this device
+  currentUser = null;
+  isFaceEnrolled = false;
+  try {
+    localStorage.removeItem("focusguard_current_user");
+  } catch (e) {}
+
+  updateUserUI();
+  updatePresenceUI();
+  updateFocusButtonUI();
+  checkFaceStatus();
   playAlertBeep(440, 0.15, 1);
   await openSwitchUserModal();
 }
@@ -2132,7 +2216,7 @@ function updateFocusButtonUI() {
 
   if (isFocusActive) {
     btn.className = "button button-danger";
-    txt.textContent = `Focus Active (${currentUser}) · Stop`;
+    txt.textContent = `Focus Active (${currentUser || 'User'}) · Stop`;
     if (icon) icon.setAttribute("data-lucide", "square");
   } else {
     btn.className = "button button-primary";
@@ -2143,6 +2227,21 @@ function updateFocusButtonUI() {
 }
 
 async function toggleFocusSession() {
+  if (!currentUser) {
+    alert("⚠️ No active user profile.\nPlease create or select a user profile on this device first!");
+    openSwitchUserModal();
+    return;
+  }
+
+  const isEnrolled = Array.isArray(enrolledFaceUsers) && enrolledFaceUsers.includes(currentUser);
+  if (!isEnrolled) {
+    const enrollNow = confirm(`⚠️ Biometric Face ID Required!\nTo prevent evasion and track presence, '${currentUser}' must enroll Face ID before starting a focus session.\n\nEnroll Face ID now?`);
+    if (enrollNow) {
+      triggerEnrollFace(currentUser);
+    }
+    return;
+  }
+
   if (!isFocusActive) {
     isFocusActive = true;
     updateFocusButtonUI();
@@ -2153,7 +2252,7 @@ async function toggleFocusSession() {
         currentUser = res.data.currentUser;
       }
     } catch (e) {}
-    alert(`🎯 Focus Session Started for ${currentUser}!\nYour custom application rules and distraction protection are now actively enforced.`);
+    alert(`🎯 Focus Session Started for ${currentUser}!\nYour custom application rules and distraction protection are now actively enforced.\nFace template is locked during session.`);
   } else {
     isFocusActive = false;
     updateFocusButtonUI();
@@ -2169,32 +2268,43 @@ async function openSwitchUserModal() {
   const modal = document.getElementById("userSwitchModal");
   if (!modal) return;
 
-  try {
-    const res = await apiFetch("/api/users", { method: "GET" });
-    if (res.ok && res.data) {
-      allUsers = (res.data.users || [currentUser]).filter(u => u !== "anshu");
-      enrolledFaceUsers = (res.data.enrolledFaceUsers || []).filter(u => u !== "anshu");
-      currentUser = res.data.currentUser || currentUser;
-      if (currentUser === "anshu") currentUser = allUsers[0] || "Yogita";
-    } else {
-      const savedUsers = JSON.parse(localStorage.getItem("focusguard_all_users") || JSON.stringify([currentUser]));
-      allUsers = Array.from(new Set([...allUsers, ...savedUsers])).filter(u => u !== "anshu");
-      enrolledFaceUsers = JSON.parse(localStorage.getItem("focusguard_enrolled_faces") || '[]').filter(u => u !== "anshu");
-      currentUser = localStorage.getItem("focusguard_current_user") || currentUser;
-      if (currentUser === "anshu") currentUser = allUsers[0] || "Yogita";
-    }
-  } catch (e) {
-    const savedUsers = JSON.parse(localStorage.getItem("focusguard_all_users") || JSON.stringify([currentUser]));
-    allUsers = Array.from(new Set([...allUsers, ...savedUsers])).filter(u => u !== "anshu");
-    enrolledFaceUsers = JSON.parse(localStorage.getItem("focusguard_enrolled_faces") || '[]').filter(u => u !== "anshu");
-    currentUser = localStorage.getItem("focusguard_current_user") || currentUser;
-    if (currentUser === "anshu") currentUser = allUsers[0] || "Yogita";
+  const isLocalhost = window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1";
+
+  if (isLocalhost) {
+    try {
+      const res = await apiFetch("/api/users", { method: "GET" });
+      if (res.ok && res.data) {
+        const serverUsers = (res.data.users || []).filter(u => u && u !== "anshu");
+        if (serverUsers.length > 0) {
+          allUsers = Array.from(new Set([...allUsers, ...serverUsers]));
+        }
+        const serverEnrolled = (res.data.enrolledFaceUsers || []).filter(u => u && u !== "anshu");
+        if (serverEnrolled.length > 0) {
+          enrolledFaceUsers = Array.from(new Set([...enrolledFaceUsers, ...serverEnrolled]));
+        }
+        if (!currentUser && res.data.currentUser && res.data.currentUser !== "anshu") {
+          currentUser = res.data.currentUser;
+        }
+      }
+    } catch (e) {}
+  } else {
+    // Isolated client / Vercel deployment: load strictly from localStorage
+    try {
+      const savedUsers = JSON.parse(localStorage.getItem("focusguard_all_users") || "[]");
+      allUsers = savedUsers.filter(u => u && u !== "anshu");
+      enrolledFaceUsers = JSON.parse(localStorage.getItem("focusguard_enrolled_faces") || "[]").filter(u => u && u !== "anshu");
+      currentUser = localStorage.getItem("focusguard_current_user") || null;
+    } catch (e) {}
   }
 
-  if (allUsers.length === 0) allUsers = ["Yogita"];
+  // Persist current device state without forcing defaults
   try {
-    localStorage.setItem("focusguard_all_users", JSON.stringify(allUsers));
-    localStorage.setItem("focusguard_current_user", currentUser);
+    if (allUsers.length > 0) {
+      localStorage.setItem("focusguard_all_users", JSON.stringify(allUsers));
+    }
+    if (currentUser) {
+      localStorage.setItem("focusguard_current_user", currentUser);
+    }
   } catch(e) {}
 
   renderUsersListModal();
@@ -2216,6 +2326,20 @@ function renderUsersListModal() {
   const container = document.getElementById("usersListContainer");
   if (!container) return;
 
+  if (!allUsers || allUsers.length === 0) {
+    container.innerHTML = `
+      <div class="p-6 text-center rounded-xl bg-neutral-900/50 border border-dashed border-neutral-800">
+        <div class="w-12 h-12 mx-auto mb-3 rounded-full bg-indigo-500/10 flex items-center justify-center text-indigo-400">
+          <i data-lucide="user-plus" class="w-6 h-6"></i>
+        </div>
+        <div class="text-sm font-semibold text-neutral-200">No Profile on this Device</div>
+        <p class="text-xs text-neutral-400 mt-1 max-w-xs mx-auto">Enter your name below to register your identity and lock your Face ID biometrics.</p>
+      </div>
+    `;
+    if (window.lucide) lucide.createIcons();
+    return;
+  }
+
   container.innerHTML = allUsers.map(user => {
     const isCurrent = user === currentUser;
     const isEnrolled = Array.isArray(enrolledFaceUsers) && enrolledFaceUsers.includes(user);
@@ -2227,13 +2351,13 @@ function renderUsersListModal() {
           </div>
           <div>
             <div class="font-semibold text-sm text-neutral-100">${escapeHtml(user)} ${isCurrent ? '<span class="text-xs text-indigo-400 font-normal ml-1">(Active)</span>' : ''}</div>
-            <div class="text-xs text-neutral-400">${isEnrolled ? '<span class="text-emerald-400 font-medium">✓ Face ID Enrolled</span>' : '<span class="text-amber-400">No Face Enrolled</span>'}</div>
+            <div class="text-xs text-neutral-400">${isEnrolled ? '<span class="text-emerald-400 font-medium">✓ Face ID Enrolled & Locked</span>' : '<span class="text-amber-400">Awaiting Face Enrollment</span>'}</div>
           </div>
         </div>
         <div class="flex items-center gap-2">
-          ${!isEnrolled ? `<button class="button button-warning button-small" onclick="triggerEnrollFace('${escapeHtml(user)}')"><i data-lucide="scan-face"></i>Enroll Face</button>` : `<button class="button button-quiet button-small" onclick="triggerEnrollFace('${escapeHtml(user)}')"><i data-lucide="refresh-cw"></i>Re-enroll</button>`}
-          ${isCurrent ? '<span class="text-xs text-emerald-400 font-medium px-2.5 py-1 bg-emerald-950/60 rounded-md border border-emerald-800">Current</span>' : `<button class="button button-secondary button-small" onclick="switchActiveUser('${escapeHtml(user)}')">Switch</button>`}
-          ${allUsers.length > 1 ? `<button class="button button-quiet button-small text-rose-400 hover:text-rose-300 hover:bg-rose-950/40" title="Delete Profile" onclick="deleteUserProfile('${escapeHtml(user)}')"><i data-lucide="trash-2"></i></button>` : ''}
+          ${!isEnrolled ? `<button class="button button-warning button-small" onclick="triggerEnrollFace('${escapeHtml(user)}')"><i data-lucide="scan-face"></i>Enroll Face</button>` : `<button class="button button-quiet button-small text-neutral-400 hover:text-white" title="Face biometric is locked to prevent evasion. Click to unlock with PIN." onclick="triggerEnrollFace('${escapeHtml(user)}')"><i data-lucide="lock"></i>Face Locked</button>`}
+          ${isCurrent ? '<span class="text-xs text-emerald-400 font-medium px-2.5 py-1 bg-emerald-950/60 rounded-md border border-emerald-800">Current</span>' : `<button class="button button-secondary button-small" onclick="switchActiveUser('${escapeHtml(user)}')">Select</button>`}
+          <button class="button button-quiet button-small text-rose-400 hover:text-rose-300 hover:bg-rose-950/40" title="Delete Profile" onclick="deleteUserProfile('${escapeHtml(user)}')"><i data-lucide="trash-2"></i></button>
         </div>
       </div>
     `;
@@ -2243,37 +2367,45 @@ function renderUsersListModal() {
 
 async function deleteUserProfile(userName) {
   if (!userName) return;
-  if (!confirm(`Are you sure you want to delete profile '${userName}'?`)) return;
+  if (isFocusActive) {
+    alert("⛔ Cannot delete profiles while a Focus Session is running.");
+    return;
+  }
+  if (!confirm(`Are you sure you want to delete profile '${userName}' from this device?`)) return;
   try {
-    const res = await apiFetch("/api/users/delete", {
+    await apiFetch("/api/users/delete", {
       method: "POST",
       body: JSON.stringify({ user_id: userName })
     });
-    if (res.ok && res.data) {
-      allUsers = (res.data.users || allUsers.filter(u => u !== userName)).filter(u => u !== "anshu");
-      currentUser = res.data.currentUser || (allUsers[0] || "Yogita");
-    } else {
-      allUsers = allUsers.filter(u => u !== userName && u !== "anshu");
-      if (currentUser === userName) currentUser = allUsers[0] || "Yogita";
-    }
-  } catch (e) {
-    allUsers = allUsers.filter(u => u !== userName && u !== "anshu");
-    if (currentUser === userName) currentUser = allUsers[0] || "Yogita";
-  }
+  } catch (e) {}
 
-  if (allUsers.length === 0) allUsers = ["Yogita"];
+  allUsers = allUsers.filter(u => u !== userName);
+  enrolledFaceUsers = enrolledFaceUsers.filter(u => u !== userName);
+  if (currentUser === userName) {
+    currentUser = allUsers.length > 0 ? allUsers[0] : null;
+  }
   try {
     localStorage.setItem("focusguard_all_users", JSON.stringify(allUsers));
-    localStorage.setItem("focusguard_current_user", currentUser);
+    localStorage.setItem("focusguard_enrolled_faces", JSON.stringify(enrolledFaceUsers));
+    if (currentUser) {
+      localStorage.setItem("focusguard_current_user", currentUser);
+    } else {
+      localStorage.removeItem("focusguard_current_user");
+    }
   } catch (e) {}
 
   renderUsersListModal();
   updateUserUI();
+  updatePresenceUI();
   checkFaceStatus();
 }
 
 async function switchActiveUser(userName) {
   if (!userName) return;
+  if (isFocusActive) {
+    alert("⛔ Anti-Evasion Lock Active!\nA Focus Session is currently running. You cannot switch profiles to bypass focus restrictions!");
+    return;
+  }
   let switched = false;
   try {
     const res = await apiFetch("/api/users/switch", {
@@ -2299,9 +2431,14 @@ async function switchActiveUser(userName) {
       localStorage.setItem("focusguard_all_users", JSON.stringify(allUsers));
       localStorage.setItem("focusguard_current_user", currentUser);
     } catch (e) {}
+  } else {
+    try {
+      localStorage.setItem("focusguard_current_user", currentUser);
+    } catch (e) {}
   }
 
   updateUserUI();
+  updatePresenceUI();
   updateFocusButtonUI();
   closeSwitchUserModal();
   checkFaceStatus();
@@ -2313,6 +2450,11 @@ async function handleCreateProfile() {
   const name = input ? input.value.trim() : "";
   if (!name) return;
 
+  if (isFocusActive) {
+    alert("⛔ Cannot create a new profile while a Focus Session is running.");
+    return;
+  }
+
   if (!allUsers.includes(name)) {
     allUsers.push(name);
     try {
@@ -2322,23 +2464,45 @@ async function handleCreateProfile() {
 
   await switchActiveUser(name);
   if (input) input.value = "";
+  // Immediately prompt to enroll and lock Face ID for this new profile
+  setTimeout(() => {
+    triggerEnrollFace(name);
+  }, 350);
 }
 
 async function checkFaceStatus() {
   const badge = document.getElementById("faceEnrolledBadge");
-  const res = await apiFetch("/api/face/status", { method: "GET" });
-  if (res.ok && res.data) {
-    enrolledFaceUsers = res.data.enrolled_users || [];
-    currentUser = res.data.currentUser || currentUser;
-    isFaceEnrolled = !!res.data.user_enrolled;
-    if (badge) {
-      if (isFaceEnrolled) {
-        badge.className = "status-badge status-good";
-        badge.innerHTML = `<i data-lucide="check-circle-2"></i> ${currentUser} enrolled`;
-      } else {
-        badge.className = "status-badge status-warn";
-        badge.innerHTML = `<i data-lucide="alert-circle"></i> ${currentUser} not enrolled`;
+  const isLocalhost = window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1";
+
+  if (isLocalhost) {
+    try {
+      const res = await apiFetch("/api/face/status", { method: "GET" });
+      if (res.ok && res.data) {
+        enrolledFaceUsers = (res.data.enrolled_users || []).filter(u => u && u !== "anshu");
+        if (currentUser) {
+          isFaceEnrolled = enrolledFaceUsers.includes(currentUser);
+        } else {
+          isFaceEnrolled = false;
+        }
       }
+    } catch (e) {}
+  } else {
+    try {
+      enrolledFaceUsers = JSON.parse(localStorage.getItem("focusguard_enrolled_faces") || "[]").filter(u => u && u !== "anshu");
+      isFaceEnrolled = currentUser ? enrolledFaceUsers.includes(currentUser) : false;
+    } catch(e) {}
+  }
+
+  if (badge) {
+    if (!currentUser) {
+      badge.className = "status-badge status-warn";
+      badge.innerHTML = `<i data-lucide="user-x"></i> Awaiting Login`;
+    } else if (isFaceEnrolled) {
+      badge.className = "status-badge status-good";
+      badge.innerHTML = `<i data-lucide="check-circle-2"></i> ${currentUser} enrolled & locked`;
+    } else {
+      badge.className = "status-badge status-warn";
+      badge.innerHTML = `<i data-lucide="alert-circle"></i> ${currentUser} not enrolled`;
     }
   }
   renderEnrolledUsersList();
@@ -2444,7 +2608,26 @@ async function startFaceEnrollment() {
   const overlayFrame = document.getElementById("scannerOverlayFrame");
 
   const userNameInput = document.getElementById("enrollUserNameInput");
-  const enrollUser = (userNameInput ? userNameInput.value.trim() : "") || currentUser || "Yogita";
+  let enrollUser = (userNameInput ? userNameInput.value.trim() : "") || currentUser || "";
+  if (!enrollUser || enrollUser === "Guest / Login") {
+    enrollUser = prompt("Enter your name to register your Face ID on this device:") || "";
+    enrollUser = enrollUser.trim();
+    if (!enrollUser) return;
+  }
+
+  // Strict Anti-Cheating & Face-Locking
+  const alreadyEnrolled = Array.isArray(enrolledFaceUsers) && enrolledFaceUsers.includes(enrollUser);
+  if (alreadyEnrolled) {
+    if (isFocusActive) {
+      alert(`⛔ Anti-Evasion Lock Active!\nA Focus Session is currently running for '${enrollUser}'.\nYou cannot modify or detect another face during an active session!`);
+      return;
+    }
+    const pin = prompt(`🔒 Security PIN Required:\nFace ID is already locked for '${enrollUser}'.\nEnter 4-digit Security PIN to verify identity before modifying biometric template:`);
+    if (pin !== "1234") {
+      alert("❌ Incorrect PIN. Face biometric template remains securely locked.");
+      return;
+    }
+  }
 
   if (!activeWebcamStream) {
     await toggleEnrollWebcam();
@@ -2481,14 +2664,25 @@ async function startFaceEnrollment() {
       });
 
       if (res.ok && res.data && res.data.success) {
+        if (!allUsers.includes(enrollUser)) {
+          allUsers.push(enrollUser);
+        }
+        if (!enrolledFaceUsers.includes(enrollUser)) {
+          enrolledFaceUsers.push(enrollUser);
+        }
         currentUser = enrollUser;
         isFaceEnrolled = true;
+        try {
+          localStorage.setItem("focusguard_all_users", JSON.stringify(allUsers));
+          localStorage.setItem("focusguard_current_user", currentUser);
+          localStorage.setItem("focusguard_enrolled_faces", JSON.stringify(enrolledFaceUsers));
+        } catch (e) {}
         if (overlayFrame) {
           overlayFrame.classList.remove("border-cyan-400");
           overlayFrame.classList.add("border-emerald-400");
         }
         await checkFaceStatus();
-        alert(`✓ Face Biometric Enrolled Successfully for '${enrollUser}'!\nTemplates securely stored with DPAPI hardware encryption.`);
+        alert(`✓ Face Biometric Enrolled & Locked Successfully for '${enrollUser}'!\nTemplates securely stored with DPAPI hardware encryption.`);
       } else {
         const err = res.data?.message || res.data?.error || "Enrollment failed. Face not detected.";
         alert(`❌ Enrollment failed: ${err}`);

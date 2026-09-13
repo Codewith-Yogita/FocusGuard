@@ -35,14 +35,14 @@
         <button id="tab-analytics" class="tab-btn" onclick="switchTab('analytics')"><i data-lucide="chart-no-axes-combined"></i><span>Analytics</span></button>
       </nav>
       <div class="header-actions">
-        <div id="headerUserBadge" class="presence-pill cursor-pointer" onclick="openSwitchUserModal()" title="Switch user profile">
+        <div id="headerUserBadge" class="presence-pill cursor-pointer" onclick="openSwitchUserModal()" title="Switch or login profile">
           <i data-lucide="user"></i>
-          <span id="headerUserName">Yogita</span>
+          <span id="headerUserName">Guest / Login</span>
         </div>
-        <button id="headerEnrollFaceBtn" class="button button-warning button-small hidden" onclick="triggerEnrollFace(currentUser)" title="Enroll face template for biometric authentication">
-          <i data-lucide="scan-face"></i><span>Enroll Face</span>
+        <button id="headerEnrollFaceBtn" class="button button-warning button-small" onclick="triggerEnrollFace(currentUser)" title="Enroll face template for biometric authentication">
+          <i data-lucide="scan-face"></i><span>Face ID Login</span>
         </button>
-        <div id="headerPresenceBadge" class="presence-pill"><span id="headerStatusDot" class="status-dot"></span><span id="headerPulseRing" class="sr-only"></span><span id="headerPresenceText">Present</span></div>
+        <div id="headerPresenceBadge" class="presence-pill"><span id="headerStatusDot" class="status-dot muted"></span><span id="headerPulseRing" class="sr-only"></span><span id="headerPresenceText">Awaiting Face Scan</span></div>
         <button class="icon-button" id="themeToggleBtn" onclick="toggleTheme()" title="Toggle theme"><i id="themeIcon" data-lucide="sun"></i></button>
         <button class="button button-secondary button-small" onclick="logoutCurrentUser()" title="Log out of current profile"><i data-lucide="log-out"></i><span>Logout</span></button>
       </div>

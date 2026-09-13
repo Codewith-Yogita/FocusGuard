@@ -29,6 +29,7 @@
   const SERVER_URLS = [
     "http://127.0.0.1:8000",
     "http://127.0.0.1:8765",
+    "https://focus-guard-snowy.vercel.app",
     "https://focusguard-bice.vercel.app"
   ];
   let activeServerUrl = "http://127.0.0.1:8000";
