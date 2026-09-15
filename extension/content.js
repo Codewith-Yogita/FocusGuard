@@ -704,12 +704,9 @@
     // ============================================================
     // FACE-GATED RESTRICTIONS (GUEST vs ENROLLED USER)
     // ============================================================
-    // If Face ID is enrolled, FocusGuard applies restrictions ONLY when
-    // the enrolled user is verified watching the screen.
-    // If someone else (Guest / non-enrolled person) is using the laptop,
-    // or if the enrolled user is not watching:
-    // ALL RESTRICTIONS ARE BYPASSED! Instagram, YouTube, etc. work flawlessly without warnings.
-    if (!isEnforcementActive || isGuestUser || !isEnrolledUserWatching) {
+    // If Guest Mode is explicitly enabled on dashboard or confirmed guest,
+    // distractions are bypassed so the guest can browse flawlessly.
+    if (isGuestUser) {
       if (streakSeconds > 0) {
         streakSeconds = 0;
         dismissAllDomHud();

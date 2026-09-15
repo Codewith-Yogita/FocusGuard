@@ -678,9 +678,9 @@ class FocusGuardRequestHandler(http.server.SimpleHTTPRequestHandler):
                 identified_user = None
                 is_guest = False
                 user_present = False
-                enforcement_active = False
-            elif is_guest or (is_user_enrolled and not user_present):
-                # A face is detected, but does NOT match the enrolled user -> GUEST!
+                enforcement_active = True
+            elif is_guest:
+                # A verified non-matching face is detected -> GUEST!
                 identified_user = "guest"
                 is_guest = True
                 user_present = False

@@ -1060,7 +1060,7 @@ setInterval(() => {
   // If the enrolled user is away or a guest is using the screen:
   // 1. Session time does NOT accumulate (productive/distraction time stops).
   // 2. Personal rules and restrictions are PAUSED (no warnings, lockout modals, or cooldowns).
-  if (!isUserPresent || !isEnrolledUserWatching || isGuestWatching) {
+  if (!demoModeActive && (!isUserPresent || isGuestWatching)) {
     if (isDistractionActive) {
       isDistractionActive = false;
       distractionStreakSeconds = 0;
@@ -2862,6 +2862,113 @@ let mediaPipeFaceDetector = null;
 let mediaPipeReady = false;
 let mediaPipeDetectionsCount = -1;
 
+let currentCameraMode = "live"; // 'live' | 'eco' | 'off'
+
+function stopCameraHardware() {
+  if (backgroundWebcamStream) {
+    try {
+      backgroundWebcamStream.getTracks().forEach(track => track.stop());
+    } catch (e) {}
+    backgroundWebcamStream = null;
+  }
+  const liveVideo = document.getElementById("livePresenceVideo");
+  if (liveVideo) {
+    liveVideo.srcObject = null;
+  }
+}
+
+async function startCameraHardware() {
+  if (backgroundWebcamStream && backgroundWebcamStream.active) {
+    return backgroundWebcamStream;
+  }
+  if (navigator.mediaDevices?.getUserMedia) {
+    try {
+      backgroundWebcamStream = await navigator.mediaDevices.getUserMedia({
+        video: { width: { ideal: 320 }, height: { ideal: 240 }, frameRate: { ideal: 15 } },
+        audio: false
+      });
+      const liveVideo = document.getElementById("livePresenceVideo");
+      if (liveVideo) {
+        liveVideo.srcObject = backgroundWebcamStream;
+        await liveVideo.play().catch(() => {});
+      }
+      initMediaPipeFaceDetector();
+      return backgroundWebcamStream;
+    } catch (e) {
+      console.warn("[FocusGuard] Camera hardware init failed:", e);
+      return null;
+    }
+  }
+  return null;
+}
+
+function setCameraMode(mode) {
+  currentCameraMode = mode;
+  const liveBtn = document.getElementById("camModeLiveBtn");
+  const ecoBtn = document.getElementById("camModeEcoBtn");
+  const offBtn = document.getElementById("camModeOffBtn");
+  const powerText = document.getElementById("camPowerStateText");
+  const video = document.getElementById("livePresenceVideo");
+  const placeholder = document.getElementById("livePresencePlaceholder");
+  const scanLine = document.getElementById("livePresenceScanLine");
+
+  const defaultBtnClass = "px-2 py-0.5 rounded text-neutral-400 hover:text-neutral-200 font-medium";
+  const activeBtnClass = "px-2 py-0.5 rounded text-neutral-100 bg-neutral-800 font-semibold shadow-sm";
+
+  if (liveBtn) liveBtn.className = mode === "live" ? activeBtnClass : defaultBtnClass;
+  if (ecoBtn) ecoBtn.className = mode === "eco" ? activeBtnClass : defaultBtnClass;
+  if (offBtn) offBtn.className = mode === "off" ? activeBtnClass : defaultBtnClass;
+
+  if (mode === "live") {
+    if (powerText) {
+      powerText.textContent = "Live 30fps";
+      powerText.className = "text-[10px] text-emerald-400 font-mono";
+    }
+    if (video) video.classList.remove("hidden");
+    if (placeholder) placeholder.classList.add("hidden");
+    if (scanLine) scanLine.classList.remove("hidden");
+    startCameraHardware();
+  } else if (mode === "eco") {
+    if (powerText) {
+      powerText.textContent = "Eco Interval";
+      powerText.className = "text-[10px] text-cyan-400 font-mono";
+    }
+    stopCameraHardware();
+    if (video) video.classList.add("hidden");
+    if (placeholder) {
+      placeholder.classList.remove("hidden");
+      placeholder.innerHTML = `
+        <i data-lucide="leaf" class="w-6 h-6 text-cyan-400 mb-1"></i>
+        <span class="text-xs text-neutral-200 font-semibold">Eco Mode: Hardware Sleeps</span>
+        <span class="text-[10px] text-neutral-400 mt-0.5">Snaps every 6s · Camera LED turns off</span>
+      `;
+      if (window.lucide) lucide.createIcons();
+    }
+    if (scanLine) scanLine.classList.add("hidden");
+  } else if (mode === "off") {
+    if (powerText) {
+      powerText.textContent = "Camera Off";
+      powerText.className = "text-[10px] text-neutral-400 font-mono";
+    }
+    stopCameraHardware();
+    if (video) video.classList.add("hidden");
+    if (placeholder) {
+      placeholder.classList.remove("hidden");
+      placeholder.innerHTML = `
+        <i data-lucide="camera-off" class="w-6 h-6 text-neutral-500 mb-1"></i>
+        <span class="text-xs text-neutral-300 font-semibold">Camera Paused</span>
+        <span class="text-[10px] text-neutral-400 mt-0.5">Zero battery usage · App blocking 100% active</span>
+      `;
+      if (window.lucide) lucide.createIcons();
+    }
+    if (scanLine) scanLine.classList.add("hidden");
+    isUserPresent = true;
+    isEnrolledUserWatching = true;
+    isGuestWatching = false;
+    updatePresenceUI();
+  }
+}
+
 function initMediaPipeFaceDetector() {
   if (typeof FaceDetection !== "undefined" && !mediaPipeFaceDetector) {
     try {
@@ -2933,25 +3040,38 @@ async function startAutoPresenceTracking() {
     if (isSessionLocked) return;
     if (manualPresenceOverride) return;
 
+    // In 'off' mode: camera hardware is completely dark, FocusGuard still protects apps
+    if (currentCameraMode === "off") {
+      isUserPresent = true;
+      isEnrolledUserWatching = true;
+      isGuestWatching = guestSimulationActive;
+      updatePresenceUI();
+      return;
+    }
+
+    let tempEcoStream = null;
     try {
       const liveVideo = document.getElementById("livePresenceVideo");
 
-      // 1. Ensure live webcam stream is connected
-      if (!backgroundWebcamStream && navigator.mediaDevices?.getUserMedia) {
+      // 1. Manage camera hardware by active mode
+      if (currentCameraMode === "eco") {
         try {
-          backgroundWebcamStream = await navigator.mediaDevices.getUserMedia({
-            video: { width: { ideal: 320 }, height: { ideal: 240 }, frameRate: { ideal: 15 } },
+          tempEcoStream = await navigator.mediaDevices.getUserMedia({
+            video: { width: { ideal: 320 }, height: { ideal: 240 } },
             audio: false
           });
-          initMediaPipeFaceDetector();
+          if (liveVideo) {
+            liveVideo.srcObject = tempEcoStream;
+            await liveVideo.play().catch(() => {});
+          }
         } catch (e) {
-          console.warn("[FocusGuard] Presence camera access failed:", e);
+          console.warn("[FocusGuard] Eco snapshot failed:", e);
         }
-      }
-
-      if (backgroundWebcamStream && liveVideo && liveVideo.srcObject !== backgroundWebcamStream) {
-        liveVideo.srcObject = backgroundWebcamStream;
-        await liveVideo.play().catch(() => {});
+      } else {
+        // Live Mode: continuous stream
+        if (!backgroundWebcamStream || !backgroundWebcamStream.active) {
+          await startCameraHardware();
+        }
       }
 
       const activeVideo = (liveVideo && liveVideo.videoWidth > 0 && !liveVideo.paused)
@@ -2989,7 +3109,13 @@ async function startAutoPresenceTracking() {
         frame = captureVideoFrame(activeVideo);
       }
 
-      // 4. Query backend presence endpoint with real captured frame
+      // 4. In Eco Mode, release hardware stream immediately so camera LED turns off!
+      if (tempEcoStream) {
+        tempEcoStream.getTracks().forEach(track => track.stop());
+        if (liveVideo) liveVideo.srcObject = null;
+      }
+
+      // 5. Query backend presence endpoint with real captured frame
       const res = await apiFetch("/api/face/presence", {
         method: "POST",
         body: JSON.stringify({
@@ -3015,13 +3141,17 @@ async function startAutoPresenceTracking() {
         updatePresenceUI();
       }
     } catch (err) {
-      // Keep existing presence state on network latency
+      if (tempEcoStream) {
+        try { tempEcoStream.getTracks().forEach(t => t.stop()); } catch (e) {}
+      }
     }
   }
 
-  // Periodic automatic heartbeat every 2.5s for fast away-detection
+  // Periodic automatic heartbeat: 2.5s in live mode, 6.0s in eco mode
   setTimeout(performPresenceHeartbeat, 1000);
-  autoPresenceInterval = setInterval(performPresenceHeartbeat, 2500);
+  autoPresenceInterval = setInterval(() => {
+    performPresenceHeartbeat();
+  }, 3500);
 }
 
 // ------------------------------------------------------------

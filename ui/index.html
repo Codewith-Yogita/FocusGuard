@@ -378,9 +378,20 @@
           <article class="card compact-card">
             <div class="card-heading"><div><span class="label">Presence</span><h3>Face detection</h3></div><span id="presenceCardDot" class="status-dot"></span></div>
 
+            <!-- Camera Power & Privacy Modes -->
+            <div class="flex items-center justify-between mb-2">
+              <div class="flex items-center gap-1 bg-neutral-900/90 border border-neutral-800 rounded-lg p-0.5 text-[11px]">
+                <button id="camModeLiveBtn" onclick="setCameraMode('live')" class="px-2 py-0.5 rounded text-neutral-100 bg-neutral-800 font-semibold shadow-sm" title="Continuous video feed (best for demo recording)">⚡ Live</button>
+                <button id="camModeEcoBtn" onclick="setCameraMode('eco')" class="px-2 py-0.5 rounded text-neutral-400 hover:text-neutral-200 font-medium" title="Intermittent snapshot every 6s, LED turns off to save battery">🍃 Eco</button>
+                <button id="camModeOffBtn" onclick="setCameraMode('off')" class="px-2 py-0.5 rounded text-neutral-400 hover:text-neutral-200 font-medium" title="Turn camera hardware completely off">⏹ Off</button>
+              </div>
+              <span id="camPowerStateText" class="text-[10px] text-emerald-400 font-mono">Live 30fps</span>
+            </div>
+
             <!-- Live Camera Feed Preview with Active Scanning Reticle -->
             <div id="livePresenceCardContainer" class="relative w-full h-28 rounded-lg overflow-hidden border border-neutral-800 bg-neutral-950 mb-3 flex items-center justify-center">
               <video id="livePresenceVideo" autoplay muted playsinline class="w-full h-full object-cover transform scale-x-[-1]"></video>
+              <div id="livePresencePlaceholder" class="hidden flex flex-col items-center justify-center text-center p-2"></div>
               <div id="livePresenceScanLine" class="scan-line"></div>
               <div id="livePresenceStatusOverlay" class="absolute bottom-1.5 left-2 px-1.5 py-0.5 rounded text-[10px] font-mono font-bold bg-black/75 backdrop-blur-sm text-emerald-400 flex items-center gap-1">
                 <span class="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-ping"></span>
