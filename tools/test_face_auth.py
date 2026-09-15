@@ -31,6 +31,15 @@ class TestFaceAuth(unittest.TestCase):
 
     def setUp(self):
         self.engine = get_face_auth_engine()
+        self.backup_path = TEMPLATE_PATH + ".test_bak"
+        if os.path.exists(TEMPLATE_PATH):
+            import shutil
+            shutil.copyfile(TEMPLATE_PATH, self.backup_path)
+
+    def tearDown(self):
+        if hasattr(self, "backup_path") and os.path.exists(self.backup_path):
+            import shutil
+            shutil.move(self.backup_path, TEMPLATE_PATH)
 
     def test_01_dpapi_encryption_roundtrip(self):
         """Verify Windows DPAPI encrypts and decrypts accurately."""
@@ -119,6 +128,10 @@ class TestFaceAuth(unittest.TestCase):
             "frames_count": 20
         }
         
+        # Ensure clean state for test_04
+        if os.path.exists(TEMPLATE_PATH):
+            os.remove(TEMPLATE_PATH)
+
         # Save template
         self.engine._save_template(dummy_template)
         self.assertTrue(os.path.exists(TEMPLATE_PATH))

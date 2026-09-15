@@ -171,7 +171,8 @@ DEFAULT_POLICIES = [
     }
 ]
 
-last_presence_state = {"present": True, "confidence": 1.0}
+last_presence_state = {"present": True, "user_present": True, "is_guest": False, "confidence": 1.0}
+last_presence_timestamp = 0.0
 
 
 def load_user_profiles():
@@ -670,13 +671,25 @@ class FocusGuardRequestHandler(http.server.SimpleHTTPRequestHandler):
             user_present = last_presence_state.get("user_present", False)
             is_guest = last_presence_state.get("is_guest", False)
 
-            # If guest or face does not match enrolled user:
-            if is_guest or (is_user_enrolled and not user_present):
+            # Accurate Presence & Identity Resolution:
+            if not present:
+                # User is completely AWAY (no face in front of screen)
+                identified_user = None
+                is_guest = False
+                user_present = False
+                enforcement_active = False
+            elif is_guest or (is_user_enrolled and not user_present):
+                # A face is detected, but does NOT match the enrolled user -> GUEST!
                 identified_user = "guest"
+                is_guest = True
+                user_present = False
                 enforcement_active = False
             else:
-                identified_user = curr_user if user_present else None
-                enforcement_active = True if not is_user_enrolled else user_present
+                # Enrolled user is actively present in front of screen
+                identified_user = curr_user
+                is_guest = False
+                user_present = True
+                enforcement_active = True
 
             # Model detection check (true only when live daemon/vision model actively tracks real windows)
             model_detected = False
@@ -1279,7 +1292,8 @@ class FocusGuardRequestHandler(http.server.SimpleHTTPRequestHandler):
 
         # 3. Presence Check (Fast presence & guest verification)
         if path in ("/api/face/presence", "/face/presence"):
-            global last_presence_state
+            global last_presence_state, last_presence_timestamp
+            last_presence_timestamp = time.time()
             target_user = payload.get("user_id") or get_current_user()
             image = payload.get("image")
             if HAS_FACE_AUTH:
@@ -1289,7 +1303,7 @@ class FocusGuardRequestHandler(http.server.SimpleHTTPRequestHandler):
                     last_presence_state = res
                     return self._send_json(200, res)
                 except Exception as ex:
-                    return self._send_json(500, {"present": False, "error": str(ex)})
+                    return self._send_json(500, {"present": False, "user_present": False, "is_guest": False, "error": str(ex)})
             else:
                 res = {
                     "present": True,
@@ -1568,10 +1582,14 @@ def find_available_port(start_port):
 def start_presence_monitor():
     """Continuously verifies if the enrolled user is watching the screen in the background."""
     def _worker():
-        global last_presence_state
+        global last_presence_state, last_presence_timestamp
         while True:
             try:
                 time.sleep(3.5)
+                # If UI dashboard has sent live camera frame recently (< 5.0s ago), skip backend capture
+                if (time.time() - last_presence_timestamp) < 5.0:
+                    continue
+
                 if HAS_FACE_AUTH:
                     engine = get_face_auth_engine()
                     enrolled = engine.list_enrolled_users()
@@ -1579,7 +1597,7 @@ def start_presence_monitor():
                         curr = get_current_user()
                         res = engine.check_presence(user_id=curr)
                         last_presence_state = res
-            except Exception:
+            except Exception as e:
                 time.sleep(4.0)
     t = threading.Thread(target=_worker, daemon=True)
     t.start()

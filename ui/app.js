@@ -1009,6 +1009,24 @@ setInterval(() => {
     return;
   }
 
+  // ------------------------------------------------------------
+  // FACE PRESENCE GATING: Pause Time & Rules When Away or Guest
+  // ------------------------------------------------------------
+  // If the enrolled user is away or a guest is using the screen:
+  // 1. Session time does NOT accumulate (productive/distraction time stops).
+  // 2. Personal rules and restrictions are PAUSED (no warnings, lockout modals, or cooldowns).
+  if (!isUserPresent || !isEnrolledUserWatching || isGuestWatching) {
+    if (isDistractionActive) {
+      isDistractionActive = false;
+      distractionStreakSeconds = 0;
+      lastWarningLevel = 0;
+      dismissHudBanner();
+      updateEscalationMeterUI();
+    }
+    renderCooldowns();
+    return;
+  }
+
   if (demoModeActive) {
     const appName = currentTarget.logicalName;
     const policy = getPolicyForApp(appName);
@@ -2787,9 +2805,97 @@ async function testFaceAuthentication() {
   }
 }
 
+// ------------------------------------------------------------
+// 15B. AUTOMATIC BACKGROUND FACE PRESENCE TRACKING
+// ------------------------------------------------------------
+let autoPresenceInterval = null;
+let backgroundWebcamVideo = null;
+let backgroundWebcamStream = null;
+let manualPresenceOverride = false;
+
 function togglePresenceSimulation() {
+  manualPresenceOverride = true;
   isUserPresent = !isUserPresent;
   updatePresenceUI();
+  // Resume automatic detection after 15 seconds
+  setTimeout(() => {
+    manualPresenceOverride = false;
+  }, 15000);
+}
+
+async function startAutoPresenceTracking() {
+  if (autoPresenceInterval) return;
+
+  async function performPresenceHeartbeat() {
+    if (isSessionLocked) return;
+    if (manualPresenceOverride) return;
+
+    try {
+      let frame = null;
+
+      // 1. Check if an active webcam video element is available
+      const candidateVideos = [
+        backgroundWebcamVideo,
+        document.getElementById("enrollWebcamVideo"),
+        document.getElementById("faceEnrollVideo")
+      ];
+
+      for (const v of candidateVideos) {
+        if (v && v.srcObject && v.videoWidth > 0 && !v.paused) {
+          frame = captureVideoFrame(v);
+          if (frame) break;
+        }
+      }
+
+      // 2. If no active video, lazily initialize lightweight background video stream
+      if (!frame && navigator.mediaDevices?.getUserMedia && !backgroundWebcamStream) {
+        try {
+          backgroundWebcamStream = await navigator.mediaDevices.getUserMedia({
+            video: { width: { ideal: 320 }, height: { ideal: 240 }, frameRate: { ideal: 10 } },
+            audio: false
+          });
+          if (!backgroundWebcamVideo) {
+            backgroundWebcamVideo = document.createElement("video");
+            backgroundWebcamVideo.setAttribute("autoplay", "");
+            backgroundWebcamVideo.setAttribute("muted", "");
+            backgroundWebcamVideo.setAttribute("playsinline", "");
+            backgroundWebcamVideo.style.display = "none";
+            document.body.appendChild(backgroundWebcamVideo);
+          }
+          backgroundWebcamVideo.srcObject = backgroundWebcamStream;
+          await backgroundWebcamVideo.play().catch(() => {});
+          await new Promise(r => setTimeout(r, 300));
+          frame = captureVideoFrame(backgroundWebcamVideo);
+        } catch (e) {
+          // Camera permission or camera busy - backend will use DirectShow fallback
+        }
+      }
+
+      // 3. Query presence endpoint
+      const res = await apiFetch("/api/face/presence", {
+        method: "POST",
+        body: JSON.stringify({
+          user_id: currentUser || "default",
+          image: frame || null
+        })
+      }, 3500);
+
+      if (res.ok && res.data) {
+        const p = res.data;
+        isUserPresent = p.present === true;
+        isGuestWatching = !!p.is_guest || (p.identified_user === "guest");
+        isEnrolledUserWatching = (p.user_present === true) && !isGuestWatching;
+        isEnforcementActive = p.enforcement_active !== undefined ? (!!p.enforcement_active && !isGuestWatching) : isEnrolledUserWatching;
+        updatePresenceUI();
+      }
+    } catch (err) {
+      // Keep existing presence state on network latency
+    }
+  }
+
+  // Periodic automatic heartbeat every 3.5s
+  setTimeout(performPresenceHeartbeat, 1500);
+  autoPresenceInterval = setInterval(performPresenceHeartbeat, 3500);
 }
 
 // ------------------------------------------------------------
@@ -4021,6 +4127,10 @@ document.addEventListener("DOMContentLoaded", () => {
   // Smooth local timer ticker for active goal countdown
   setInterval(() => {
     if (lastSeenActiveGoalSession && lastSeenActiveGoalSession.active && !lastSeenActiveGoalSession.isPaused) {
+      // Pause active goal countdown when user is away or guest is watching
+      if (!isUserPresent || !isEnrolledUserWatching || isGuestWatching) {
+        return;
+      }
       if (lastSeenActiveGoalSession.intervalRemainingSeconds > 0) {
         lastSeenActiveGoalSession.intervalRemainingSeconds--;
         const timerEl = document.getElementById("activeIntervalTimer");
@@ -4057,6 +4167,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
   pollBackendStatus();
   setInterval(pollBackendStatus, 1500);
+  startAutoPresenceTracking();
 
   document.addEventListener("visibilitychange", () => {
     if (!document.hidden) {

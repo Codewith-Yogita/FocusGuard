@@ -47,7 +47,7 @@ MODEL_URLS = {
 }
 
 # Thresholds
-DEFAULT_CONFIDENCE_THRESHOLD = 0.38  # Cosine similarity threshold for SFace (balanced for webcam angles)
+DEFAULT_CONFIDENCE_THRESHOLD = 0.40  # Cosine similarity threshold for SFace (balanced for webcam angles)
 LIVENESS_MIN_VARIATION = 0.003       # Landmark displacement variation threshold
 
 
@@ -240,6 +240,13 @@ class FaceAuthEngine:
         with open(TEMPLATE_PATH, "wb") as f:
             f.write(encrypted_bytes)
 
+    def _save_template(self, template_dict: dict):
+        """Backwards-compatible single template saver."""
+        user_id = template_dict.get("user_id", "default")
+        templates = self._load_templates()
+        templates[user_id] = template_dict
+        self._save_templates(templates)
+
     def _load_template(self, user_id=None) -> dict:
         """Backwards-compatible single template getter."""
         templates = self._load_templates()
@@ -253,8 +260,13 @@ class FaceAuthEngine:
             if user_id == "Yogita" and "default" in templates:
                 return templates["default"]
             return None
-        # Return first available template
-        return next(iter(templates.values()), None)
+        # Return most recently enrolled/updated template
+        sorted_templates = sorted(
+            templates.values(),
+            key=lambda t: t.get("enrolled_at", 0) if isinstance(t, dict) else 0,
+            reverse=True
+        )
+        return sorted_templates[0] if sorted_templates else None
 
     def list_enrolled_users(self) -> list:
         """Returns list of all user IDs that have enrolled biometric face templates."""
@@ -589,14 +601,15 @@ class FaceAuthEngine:
                 if not cap.isOpened():
                     cap = cv2.VideoCapture(self.camera_index)
                 if not cap.isOpened():
-                    # If camera is busy or unavailable (e.g. active in browser), preserve presence
+                    # If camera is unavailable or cannot be accessed, report away rather than faking presence
                     return {
-                        "present": True,
-                        "user_present": True,
+                        "present": False,
+                        "user_present": False,
                         "is_guest": False,
-                        "user_id": target_user,
-                        "confidence": 1.0,
-                        "reason": "camera_busy_preserved"
+                        "user_id": None,
+                        "confidence": 0.0,
+                        "reason": "camera_unavailable",
+                        "message": "Webcam is busy or unavailable."
                     }
 
             face_detected = False
@@ -629,8 +642,8 @@ class FaceAuthEngine:
                     if norm_conf > best_conf:
                         best_conf = norm_conf
 
-                    # Relax threshold slightly for fast presence checks
-                    if score >= (self.threshold - 0.05):
+                    # Verified enrolled user match
+                    if score >= self.threshold:
                         return {
                             "present": True,
                             "user_present": True,
