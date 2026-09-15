@@ -831,6 +831,12 @@ function updatePresenceUI() {
     return;
   }
 
+  const cardDot = document.getElementById("presenceCardDot");
+  const liveContainer = document.getElementById("livePresenceCardContainer");
+  const liveStatusText = document.getElementById("livePresenceStatusText");
+  const liveOverlay = document.getElementById("livePresenceStatusOverlay");
+  const scanLine = document.getElementById("livePresenceScanLine");
+
   if (isGuestWatching) {
     if (badge) {
       badge.textContent = "Guest Detected (Rules Paused)";
@@ -843,6 +849,20 @@ function updatePresenceUI() {
     if (headerDot) {
       headerDot.className = "status-dot bg-amber-400";
     }
+    if (cardDot) {
+      cardDot.className = "status-dot bg-amber-400";
+    }
+    if (liveContainer) {
+      liveContainer.className = "relative w-full h-28 rounded-lg overflow-hidden border border-amber-500/60 bg-neutral-950 mb-3 flex items-center justify-center shadow-lg shadow-amber-500/10";
+    }
+    if (liveStatusText) {
+      liveStatusText.textContent = "Guest Face Detected";
+    }
+    if (liveOverlay) {
+      liveOverlay.className = "absolute bottom-1.5 left-2 px-1.5 py-0.5 rounded text-[10px] font-mono font-bold bg-black/80 backdrop-blur-sm text-amber-400 flex items-center gap-1";
+    }
+    if (scanLine) scanLine.classList.remove("hidden");
+
     if (presCountEl) {
       presCountEl.textContent = "Restrictions paused · Non-enrolled person using laptop";
     }
@@ -863,6 +883,20 @@ function updatePresenceUI() {
     if (headerDot) {
       headerDot.className = "status-dot bg-emerald-500";
     }
+    if (cardDot) {
+      cardDot.className = "status-dot bg-emerald-500";
+    }
+    if (liveContainer) {
+      liveContainer.className = "relative w-full h-28 rounded-lg overflow-hidden border border-emerald-500/60 bg-neutral-950 mb-3 flex items-center justify-center shadow-lg shadow-emerald-500/10";
+    }
+    if (liveStatusText) {
+      liveStatusText.textContent = `${currentUser} Verified`;
+    }
+    if (liveOverlay) {
+      liveOverlay.className = "absolute bottom-1.5 left-2 px-1.5 py-0.5 rounded text-[10px] font-mono font-bold bg-black/80 backdrop-blur-sm text-emerald-400 flex items-center gap-1";
+    }
+    if (scanLine) scanLine.classList.remove("hidden");
+
     if (presCountEl) {
       presCountEl.textContent = `Auto-lock armed · ${presenceCountdown}s`;
     }
@@ -870,7 +904,7 @@ function updatePresenceUI() {
       presProgress.style.width = `${(presenceCountdown / 60) * 100}%`;
       presProgress.className = "progress-bar-fill bg-emerald-500";
     }
-    if (simBtnText) simBtnText.textContent = "Simulate user away";
+    if (simBtnText) simBtnText.textContent = "Simulate away";
   } else {
     if (badge) {
       badge.textContent = "Absent (No Face Detected)";
@@ -881,16 +915,30 @@ function updatePresenceUI() {
       headerBadge.className = "text-xs font-bold text-rose-500";
     }
     if (headerDot) {
-      headerDot.className = "status-dot muted";
+      headerDot.className = "status-dot bg-rose-500";
     }
+    if (cardDot) {
+      cardDot.className = "status-dot bg-rose-500";
+    }
+    if (liveContainer) {
+      liveContainer.className = "relative w-full h-28 rounded-lg overflow-hidden border border-rose-500/60 bg-neutral-950 mb-3 flex items-center justify-center";
+    }
+    if (liveStatusText) {
+      liveStatusText.textContent = "No Face Detected (Away)";
+    }
+    if (liveOverlay) {
+      liveOverlay.className = "absolute bottom-1.5 left-2 px-1.5 py-0.5 rounded text-[10px] font-mono font-bold bg-black/80 backdrop-blur-sm text-rose-400 flex items-center gap-1";
+    }
+    if (scanLine) scanLine.classList.add("hidden");
+
     if (presCountEl) {
-      presCountEl.textContent = `Locking in ${presenceCountdown}s...`;
+      presCountEl.textContent = "Focus session paused · User away from screen";
     }
     if (presProgress) {
       presProgress.style.width = `${(presenceCountdown / 60) * 100}%`;
       presProgress.className = "progress-bar-fill bg-rose-500";
     }
-    if (simBtnText) simBtnText.textContent = "Simulate user returned";
+    if (simBtnText) simBtnText.textContent = "Simulate returned";
   }
 }
 
@@ -2803,132 +2851,167 @@ async function testFaceAuthentication() {
 }
 
 // ------------------------------------------------------------
-// 15B. AUTOMATIC BACKGROUND FACE PRESENCE TRACKING
+// 15B. AUTOMATIC BACKGROUND FACE PRESENCE TRACKING & MEDIAPIPE
 // ------------------------------------------------------------
 let autoPresenceInterval = null;
 let backgroundWebcamVideo = null;
 let backgroundWebcamStream = null;
 let manualPresenceOverride = false;
+let guestSimulationActive = false;
+let mediaPipeFaceDetector = null;
+let mediaPipeReady = false;
+let mediaPipeDetectionsCount = -1;
+
+function initMediaPipeFaceDetector() {
+  if (typeof FaceDetection !== "undefined" && !mediaPipeFaceDetector) {
+    try {
+      mediaPipeFaceDetector = new FaceDetection({
+        locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/face_detection/${file}`
+      });
+      mediaPipeFaceDetector.setOptions({
+        model: "short",
+        minDetectionConfidence: 0.52
+      });
+      mediaPipeFaceDetector.onResults((results) => {
+        mediaPipeDetectionsCount = (results && results.detections) ? results.detections.length : 0;
+      });
+      mediaPipeReady = true;
+      console.log("[FocusGuard] MediaPipe Neural Face Detector active.");
+    } catch (err) {
+      console.warn("[FocusGuard] MediaPipe init error:", err);
+    }
+  }
+}
 
 function togglePresenceSimulation() {
   manualPresenceOverride = true;
   isUserPresent = !isUserPresent;
+  if (!isUserPresent) {
+    isEnrolledUserWatching = false;
+    isGuestWatching = false;
+  } else {
+    isEnrolledUserWatching = true;
+  }
   updatePresenceUI();
+
   // Resume automatic detection after 15 seconds
   setTimeout(() => {
     manualPresenceOverride = false;
   }, 15000);
 }
 
+function simulateGuestUser() {
+  manualPresenceOverride = true;
+  guestSimulationActive = true;
+  isGuestWatching = true;
+  isEnrolledUserWatching = false;
+  isUserPresent = true;
+  updatePresenceUI();
+
+  const toast = document.getElementById("browserHudBanner");
+  if (toast) {
+    toast.textContent = "Guest simulation active: focus restrictions paused for non-enrolled user";
+    toast.classList.remove("hidden");
+    setTimeout(() => toast.classList.add("hidden"), 4000);
+  }
+
+  // Restore normal detection after 15 seconds
+  setTimeout(() => {
+    guestSimulationActive = false;
+    isGuestWatching = false;
+    manualPresenceOverride = false;
+    updatePresenceUI();
+  }, 15000);
+}
+
 async function startAutoPresenceTracking() {
   if (autoPresenceInterval) return;
+
+  initMediaPipeFaceDetector();
 
   async function performPresenceHeartbeat() {
     if (isSessionLocked) return;
     if (manualPresenceOverride) return;
 
     try {
-      let frame = null;
+      const liveVideo = document.getElementById("livePresenceVideo");
 
-      // 1. Check if an active webcam video element is available
-      const candidateVideos = [
-        document.getElementById("enrollWebcamVideo"),
-        document.getElementById("faceEnrollVideo"),
-        backgroundWebcamVideo
-      ];
-
-      for (const v of candidateVideos) {
-        if (v && v.srcObject && v.videoWidth > 0 && !v.paused) {
-          frame = captureVideoFrame(v);
-          if (frame) break;
-        }
-      }
-
-      // 2. If no active video, lazily initialize lightweight background video stream (off-screen layout, NOT display:none)
+      // 1. Ensure live webcam stream is connected
       if (!backgroundWebcamStream && navigator.mediaDevices?.getUserMedia) {
         try {
           backgroundWebcamStream = await navigator.mediaDevices.getUserMedia({
-            video: { width: { ideal: 320 }, height: { ideal: 240 }, frameRate: { ideal: 10 } },
+            video: { width: { ideal: 320 }, height: { ideal: 240 }, frameRate: { ideal: 15 } },
             audio: false
           });
-          if (!backgroundWebcamVideo) {
-            backgroundWebcamVideo = document.createElement("video");
-            backgroundWebcamVideo.setAttribute("autoplay", "");
-            backgroundWebcamVideo.setAttribute("muted", "");
-            backgroundWebcamVideo.setAttribute("playsinline", "");
-            // MUST be in render layout so browser actively decodes video frames:
-            backgroundWebcamVideo.style.cssText = "position:fixed;top:-9999px;left:-9999px;width:320px;height:240px;opacity:0;pointer-events:none;";
-            backgroundWebcamVideo.width = 320;
-            backgroundWebcamVideo.height = 240;
-            document.body.appendChild(backgroundWebcamVideo);
-          }
-          backgroundWebcamVideo.srcObject = backgroundWebcamStream;
-          await backgroundWebcamVideo.play().catch(() => {});
-          await new Promise(r => setTimeout(r, 400));
+          initMediaPipeFaceDetector();
         } catch (e) {
-          console.warn("Background camera init failed:", e);
+          console.warn("[FocusGuard] Presence camera access failed:", e);
         }
       }
 
-      if (!frame && backgroundWebcamVideo && backgroundWebcamVideo.srcObject && !backgroundWebcamVideo.paused) {
-        frame = captureVideoFrame(backgroundWebcamVideo);
+      if (backgroundWebcamStream && liveVideo && liveVideo.srcObject !== backgroundWebcamStream) {
+        liveVideo.srcObject = backgroundWebcamStream;
+        await liveVideo.play().catch(() => {});
       }
 
-      // Client-side browser face presence check (instant offline & Vercel fallback)
+      const activeVideo = (liveVideo && liveVideo.videoWidth > 0 && !liveVideo.paused)
+        ? liveVideo
+        : ([
+            document.getElementById("enrollWebcamVideo"),
+            document.getElementById("faceEnrollVideo")
+          ].find(v => v && v.srcObject && v.videoWidth > 0 && !v.paused) || liveVideo);
+
+      // 2. Client-side neural face presence check (MediaPipe / FaceDetector)
       let clientFaceDetected = null;
-      const activeVideoForDetect = candidateVideos.find(v => v && v.srcObject && v.videoWidth > 0 && !v.paused) || backgroundWebcamVideo;
-      if (activeVideoForDetect && activeVideoForDetect.videoWidth > 0 && !activeVideoForDetect.paused) {
-        if ("FaceDetector" in window) {
+
+      if (activeVideo && activeVideo.videoWidth > 0 && !activeVideo.paused) {
+        if (mediaPipeFaceDetector && mediaPipeReady) {
           try {
-            const detector = new window.FaceDetector({ fastMode: true, maxDetectedFaces: 2 });
-            const detectedFaces = await detector.detect(activeVideoForDetect);
-            clientFaceDetected = detectedFaces && detectedFaces.length > 0;
+            await mediaPipeFaceDetector.send({ image: activeVideo });
+            if (mediaPipeDetectionsCount >= 0) {
+              clientFaceDetected = mediaPipeDetectionsCount > 0;
+            }
           } catch (e) {}
         }
-        if (clientFaceDetected === null) {
+
+        if (clientFaceDetected === null && "FaceDetector" in window) {
           try {
-            const testCanvas = document.createElement("canvas");
-            testCanvas.width = 64;
-            testCanvas.height = 48;
-            const tCtx = testCanvas.getContext("2d", { willReadFrequently: true });
-            tCtx.drawImage(activeVideoForDetect, 0, 0, 64, 48);
-            const imgData = tCtx.getImageData(16, 8, 32, 32);
-            const p = imgData.data;
-            let skinHits = 0;
-            for (let i = 0; i < p.length; i += 4) {
-              const r = p[i], g = p[i + 1], b = p[i + 2];
-              if (r > 60 && g > 40 && b > 20 && r > g && r > b && (r - g) > 12 && (r - b) > 12) {
-                skinHits++;
-              }
-            }
-            const ratio = skinHits / (p.length / 4);
-            clientFaceDetected = ratio > 0.08;
+            const fd = new window.FaceDetector({ fastMode: true, maxDetectedFaces: 2 });
+            const detected = await fd.detect(activeVideo);
+            clientFaceDetected = detected && detected.length > 0;
           } catch (e) {}
         }
       }
 
-      // 3. Query backend presence endpoint with real captured frame
+      // 3. Capture fresh frame for backend identification
+      let frame = null;
+      if (activeVideo && activeVideo.videoWidth > 0 && !activeVideo.paused) {
+        frame = captureVideoFrame(activeVideo);
+      }
+
+      // 4. Query backend presence endpoint with real captured frame
       const res = await apiFetch("/api/face/presence", {
         method: "POST",
         body: JSON.stringify({
           user_id: currentUser || "default",
-          image: frame || null
+          image: frame || null,
+          client_present: clientFaceDetected
         })
       }, 3500);
 
       if (res.ok && res.data && typeof res.data.present === "boolean") {
         const p = res.data;
         isUserPresent = p.present === true;
-        isGuestWatching = !!p.is_guest || (p.identified_user === "guest");
+        isGuestWatching = guestSimulationActive || !!p.is_guest || (p.identified_user === "guest");
         isEnrolledUserWatching = (p.user_present === true) && !isGuestWatching;
         isEnforcementActive = p.enforcement_active !== undefined ? (!!p.enforcement_active && !isGuestWatching) : isEnrolledUserWatching;
         updatePresenceUI();
       } else if (clientFaceDetected !== null) {
         // Vercel deployment or offline server fallback
         isUserPresent = clientFaceDetected;
-        isEnrolledUserWatching = clientFaceDetected;
-        isGuestWatching = false;
-        isEnforcementActive = clientFaceDetected;
+        isGuestWatching = guestSimulationActive;
+        isEnrolledUserWatching = clientFaceDetected && !isGuestWatching;
+        isEnforcementActive = clientFaceDetected && !isGuestWatching;
         updatePresenceUI();
       }
     } catch (err) {
@@ -2936,9 +3019,9 @@ async function startAutoPresenceTracking() {
     }
   }
 
-  // Periodic automatic heartbeat every 3.5s
-  setTimeout(performPresenceHeartbeat, 1500);
-  autoPresenceInterval = setInterval(performPresenceHeartbeat, 3500);
+  // Periodic automatic heartbeat every 2.5s for fast away-detection
+  setTimeout(performPresenceHeartbeat, 1000);
+  autoPresenceInterval = setInterval(performPresenceHeartbeat, 2500);
 }
 
 // ------------------------------------------------------------

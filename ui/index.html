@@ -14,7 +14,8 @@
   <script>tailwind.config={darkMode:'class',theme:{extend:{fontFamily:{sans:['DM Sans','sans-serif'],mono:['JetBrains Mono','monospace']}}}}</script>
   <script src="https://unpkg.com/lucide@latest"></script>
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-  <link rel="stylesheet" href="styles.css?v=2.7.0">
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_detection/face_detection.js" crossorigin="anonymous"></script>
+  <link rel="stylesheet" href="styles.css?v=2.7.2">
 </head>
 <body>
   <div id="browserHudBanner" class="hud hidden" role="status" aria-live="polite">
@@ -375,11 +376,25 @@
 
           <!-- Face Presence Detection Card -->
           <article class="card compact-card">
-            <div class="card-heading"><div><span class="label">Presence</span><h3>Face detection</h3></div><span class="status-dot"></span></div>
+            <div class="card-heading"><div><span class="label">Presence</span><h3>Face detection</h3></div><span id="presenceCardDot" class="status-dot"></span></div>
+
+            <!-- Live Camera Feed Preview with Active Scanning Reticle -->
+            <div id="livePresenceCardContainer" class="relative w-full h-28 rounded-lg overflow-hidden border border-neutral-800 bg-neutral-950 mb-3 flex items-center justify-center">
+              <video id="livePresenceVideo" autoplay muted playsinline class="w-full h-full object-cover transform scale-x-[-1]"></video>
+              <div id="livePresenceScanLine" class="scan-line"></div>
+              <div id="livePresenceStatusOverlay" class="absolute bottom-1.5 left-2 px-1.5 py-0.5 rounded text-[10px] font-mono font-bold bg-black/75 backdrop-blur-sm text-emerald-400 flex items-center gap-1">
+                <span class="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-ping"></span>
+                <span id="livePresenceStatusText">Camera Active</span>
+              </div>
+            </div>
+
             <div class="presence-state"><b id="presenceStateBadge">Present (Face Visible)</b><span id="presenceCountdownText">Auto-lock armed · 60s</span></div>
             <div class="progress-track slim"><div id="presenceProgressBar" style="width:100%"></div></div>
             <label class="toggle-row"><span><b>Auto-lock</b><small>Lock after 60 seconds away</small></span><input id="presenceAutoLockToggle" type="checkbox" checked><i></i></label>
-            <button id="simPresenceBtn" class="button button-secondary full" onclick="togglePresenceSimulation()"><i data-lucide="user-round"></i><span id="simPresenceBtnText">Simulate user away</span></button>
+            <div class="grid grid-cols-2 gap-2 mt-2">
+              <button id="simPresenceBtn" class="button button-secondary full text-xs py-1.5" onclick="togglePresenceSimulation()"><i data-lucide="user-round" class="w-3.5 h-3.5"></i><span id="simPresenceBtnText">Simulate away</span></button>
+              <button id="simGuestBtn" class="button button-secondary full text-xs py-1.5" onclick="simulateGuestUser()"><i data-lucide="user-x" class="w-3.5 h-3.5"></i><span>Simulate guest</span></button>
+            </div>
           </article>
 
           <!-- Cooldowns / Restricted apps Card -->
@@ -674,6 +689,6 @@
     </div>
   </div>
 
-  <script src="app.js?v=2.7.0"></script>
+  <script src="app.js?v=2.7.2"></script>
 </body>
 </html>

@@ -1307,13 +1307,15 @@ class FocusGuardRequestHandler(http.server.SimpleHTTPRequestHandler):
                     print(f"[Face Presence Error] {ex}")
                     return self._send_json(500, {"present": False, "user_present": False, "is_guest": False, "error": str(ex)})
             else:
+                client_present = payload.get("client_present")
+                is_pres = bool(client_present) if client_present is not None else False
                 res = {
-                    "present": True,
-                    "user_present": True,
+                    "present": is_pres,
+                    "user_present": is_pres,
                     "is_guest": False,
-                    "user_id": target_user,
-                    "confidence": 0.92,
-                    "message": "User present in front of screen."
+                    "user_id": target_user if is_pres else None,
+                    "confidence": 0.92 if is_pres else 0.0,
+                    "message": "User present in front of screen." if is_pres else "No face detected in front of screen."
                 }
                 last_presence_state = res
                 return self._send_json(200, res)
