@@ -1301,8 +1301,10 @@ class FocusGuardRequestHandler(http.server.SimpleHTTPRequestHandler):
                     engine = get_face_auth_engine()
                     res = engine.check_presence(user_id=target_user, image=image)
                     last_presence_state = res
+                    print(f"[Face Presence] User: {target_user} | Frame: {'Provided' if image else 'None'} -> Present: {res.get('present')} | UserPresent: {res.get('user_present')} | Msg: {res.get('message')}")
                     return self._send_json(200, res)
                 except Exception as ex:
+                    print(f"[Face Presence Error] {ex}")
                     return self._send_json(500, {"present": False, "user_present": False, "is_guest": False, "error": str(ex)})
             else:
                 res = {

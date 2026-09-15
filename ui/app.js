@@ -433,6 +433,14 @@ async function pollBackendStatus() {
         goalPausedUntil = 0;
       }
 
+      if (data.presence && typeof data.presence === "object") {
+        isGuestWatching = !!data.presence.is_guest || (data.presence.identified_user === "guest");
+        isUserPresent = data.presence.present === true;
+        isEnrolledUserWatching = (data.presence.user_present === true) && !isGuestWatching;
+        isEnforcementActive = data.presence.enforcement_active === true && !isGuestWatching;
+        updatePresenceUI();
+      }
+
       if (!demoModeActive) {
         if (data.currentTarget && typeof data.currentTarget === "object") {
           currentTarget = {
@@ -457,17 +465,6 @@ async function pollBackendStatus() {
             interventionsCount: Number(data.session.interventionsCount) || 0,
             focusScore: Number(data.session.focusScore) || 100
           };
-        }
-
-        if (data.presence && typeof data.presence === "object") {
-          isGuestWatching = !!data.presence.is_guest || (data.presence.identified_user === "guest");
-          isUserPresent = data.presence.present === true;
-          isEnrolledUserWatching = (data.presence.user_present === true) && !isGuestWatching;
-          isEnforcementActive = data.presence.enforcement_active === true && !isGuestWatching;
-          if (typeof data.presence.secondsUntilLock === "number") {
-            presenceCountdown = data.presence.secondsUntilLock;
-          }
-          updatePresenceUI();
         }
 
         if (Array.isArray(data.cooldowns)) {
@@ -2835,9 +2832,9 @@ async function startAutoPresenceTracking() {
 
       // 1. Check if an active webcam video element is available
       const candidateVideos = [
-        backgroundWebcamVideo,
         document.getElementById("enrollWebcamVideo"),
-        document.getElementById("faceEnrollVideo")
+        document.getElementById("faceEnrollVideo"),
+        backgroundWebcamVideo
       ];
 
       for (const v of candidateVideos) {
@@ -2847,8 +2844,8 @@ async function startAutoPresenceTracking() {
         }
       }
 
-      // 2. If no active video, lazily initialize lightweight background video stream
-      if (!frame && navigator.mediaDevices?.getUserMedia && !backgroundWebcamStream) {
+      // 2. If no active video, lazily initialize lightweight background video stream (off-screen layout, NOT display:none)
+      if (!backgroundWebcamStream && navigator.mediaDevices?.getUserMedia) {
         try {
           backgroundWebcamStream = await navigator.mediaDevices.getUserMedia({
             video: { width: { ideal: 320 }, height: { ideal: 240 }, frameRate: { ideal: 10 } },
@@ -2859,19 +2856,58 @@ async function startAutoPresenceTracking() {
             backgroundWebcamVideo.setAttribute("autoplay", "");
             backgroundWebcamVideo.setAttribute("muted", "");
             backgroundWebcamVideo.setAttribute("playsinline", "");
-            backgroundWebcamVideo.style.display = "none";
+            // MUST be in render layout so browser actively decodes video frames:
+            backgroundWebcamVideo.style.cssText = "position:fixed;top:-9999px;left:-9999px;width:320px;height:240px;opacity:0;pointer-events:none;";
+            backgroundWebcamVideo.width = 320;
+            backgroundWebcamVideo.height = 240;
             document.body.appendChild(backgroundWebcamVideo);
           }
           backgroundWebcamVideo.srcObject = backgroundWebcamStream;
           await backgroundWebcamVideo.play().catch(() => {});
-          await new Promise(r => setTimeout(r, 300));
-          frame = captureVideoFrame(backgroundWebcamVideo);
+          await new Promise(r => setTimeout(r, 400));
         } catch (e) {
-          // Camera permission or camera busy - backend will use DirectShow fallback
+          console.warn("Background camera init failed:", e);
         }
       }
 
-      // 3. Query presence endpoint
+      if (!frame && backgroundWebcamVideo && backgroundWebcamVideo.srcObject && !backgroundWebcamVideo.paused) {
+        frame = captureVideoFrame(backgroundWebcamVideo);
+      }
+
+      // Client-side browser face presence check (instant offline & Vercel fallback)
+      let clientFaceDetected = null;
+      const activeVideoForDetect = candidateVideos.find(v => v && v.srcObject && v.videoWidth > 0 && !v.paused) || backgroundWebcamVideo;
+      if (activeVideoForDetect && activeVideoForDetect.videoWidth > 0 && !activeVideoForDetect.paused) {
+        if ("FaceDetector" in window) {
+          try {
+            const detector = new window.FaceDetector({ fastMode: true, maxDetectedFaces: 2 });
+            const detectedFaces = await detector.detect(activeVideoForDetect);
+            clientFaceDetected = detectedFaces && detectedFaces.length > 0;
+          } catch (e) {}
+        }
+        if (clientFaceDetected === null) {
+          try {
+            const testCanvas = document.createElement("canvas");
+            testCanvas.width = 64;
+            testCanvas.height = 48;
+            const tCtx = testCanvas.getContext("2d", { willReadFrequently: true });
+            tCtx.drawImage(activeVideoForDetect, 0, 0, 64, 48);
+            const imgData = tCtx.getImageData(16, 8, 32, 32);
+            const p = imgData.data;
+            let skinHits = 0;
+            for (let i = 0; i < p.length; i += 4) {
+              const r = p[i], g = p[i + 1], b = p[i + 2];
+              if (r > 60 && g > 40 && b > 20 && r > g && r > b && (r - g) > 12 && (r - b) > 12) {
+                skinHits++;
+              }
+            }
+            const ratio = skinHits / (p.length / 4);
+            clientFaceDetected = ratio > 0.08;
+          } catch (e) {}
+        }
+      }
+
+      // 3. Query backend presence endpoint with real captured frame
       const res = await apiFetch("/api/face/presence", {
         method: "POST",
         body: JSON.stringify({
@@ -2880,12 +2916,19 @@ async function startAutoPresenceTracking() {
         })
       }, 3500);
 
-      if (res.ok && res.data) {
+      if (res.ok && res.data && typeof res.data.present === "boolean") {
         const p = res.data;
         isUserPresent = p.present === true;
         isGuestWatching = !!p.is_guest || (p.identified_user === "guest");
         isEnrolledUserWatching = (p.user_present === true) && !isGuestWatching;
         isEnforcementActive = p.enforcement_active !== undefined ? (!!p.enforcement_active && !isGuestWatching) : isEnrolledUserWatching;
+        updatePresenceUI();
+      } else if (clientFaceDetected !== null) {
+        // Vercel deployment or offline server fallback
+        isUserPresent = clientFaceDetected;
+        isEnrolledUserWatching = clientFaceDetected;
+        isGuestWatching = false;
+        isEnforcementActive = clientFaceDetected;
         updatePresenceUI();
       }
     } catch (err) {
